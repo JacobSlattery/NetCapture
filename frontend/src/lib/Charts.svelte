@@ -9,19 +9,12 @@
   let lineChart: echarts.ECharts | undefined
   let mo:  MutationObserver | undefined
 
-  const PROTO_COLORS = {
-    TCP:   '#3b82f6',
-    UDP:   '#10b981',
-    DNS:   '#8b5cf6',
-    ICMP:  '#f59e0b',
-    HTTP:  '#f97316',
-    HTTPS: '#06b6d4',
-    TLS:   '#06b6d4',
-    ARP:   '#ec4899',
-  }
+  // Protocol and chart colours are read from CSS vars at init time so they
+  // stay in sync with app.css. Re-read on theme change via MutationObserver.
+  let protoColors: Record<string, string> = {}
 
   function protoColor(name: string): string {
-    return (PROTO_COLORS as Record<string, string>)[name] ?? '#6b7280'
+    return protoColors[name] ?? protoColors['default'] ?? '#6b7280'
   }
 
   function getThemeColors() {
@@ -34,6 +27,14 @@
       fg:        get('--nc-fg'),
       fg2:       get('--nc-fg-2'),
       fg3:       get('--nc-fg-3'),
+      pTcp:      get('--nc-p-tcp'),
+      pUdp:      get('--nc-p-udp'),
+      pDns:      get('--nc-p-dns'),
+      pIcmp:     get('--nc-p-icmp'),
+      pHttp:     get('--nc-p-http'),
+      pHttps:    get('--nc-p-https'),
+      pArp:      get('--nc-p-arp'),
+      pDefault:  get('--nc-p-default'),
     }
   }
 
@@ -45,6 +46,11 @@
     lineChart = echarts.init(lineEl, null, { renderer: 'svg'    })
 
     const t = getThemeColors()
+    protoColors = {
+      TCP: t.pTcp, UDP: t.pUdp, DNS: t.pDns, ICMP: t.pIcmp,
+      HTTP: t.pHttp, HTTPS: t.pHttps, TLS: t.pHttps, ARP: t.pArp,
+      default: t.pDefault,
+    }
 
     // Set full static config once — subsequent updates only push data
     pieChart.setOption({
@@ -129,7 +135,7 @@
           name: 'Pkts/s',
           type: 'bar',
           data: [],
-          itemStyle: { color: '#3b82f6' },
+          itemStyle: { color: t.pTcp },
           barMaxWidth: 12,
         },
         {
@@ -139,8 +145,8 @@
           data: [],
           smooth: true,
           symbol: 'none',
-          lineStyle: { color: '#10b981', width: 2 },
-          areaStyle: { color: 'rgba(16,185,129,0.12)' },
+          lineStyle: { color: t.pUdp, width: 2 },
+          areaStyle: { color: `color-mix(in srgb, ${t.pUdp} 12%, transparent)` },
         },
       ],
     })

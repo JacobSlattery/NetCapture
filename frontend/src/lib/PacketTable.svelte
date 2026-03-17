@@ -18,25 +18,25 @@
   let padBottom  = 0
 
   // ── Protocol colour tables ─────────────────────────────────────────────────
-  const ROW_TINT = {
-    TCP:   'bg-blue-950/20',  UDP:   'bg-green-950/20',
-    DNS:   'bg-purple-950/20',ICMP:  'bg-amber-950/20',
-    HTTP:  'bg-orange-950/20',HTTPS: 'bg-cyan-950/20',
-    TLS:   'bg-cyan-950/20',  ARP:   'bg-pink-950/20',
+  const ROW_TINT: Record<string, string> = {
+    TCP:  'nc-tint-tcp',  UDP:  'nc-tint-udp',
+    DNS:  'nc-tint-dns',  ICMP: 'nc-tint-icmp',
+    HTTP: 'nc-tint-http', HTTPS:'nc-tint-https',
+    TLS:  'nc-tint-https',ARP:  'nc-tint-arp',
   }
-  const BADGE = {
-    TCP:   'bg-blue-600',  UDP:   'bg-green-600',
-    DNS:   'bg-purple-600',ICMP:  'bg-amber-600',
-    HTTP:  'bg-orange-600',HTTPS: 'bg-cyan-600',
-    TLS:   'bg-cyan-600',  ARP:   'bg-pink-600',
+  const BADGE_VAR: Record<string, string> = {
+    TCP:  '--nc-p-tcp',  UDP:  '--nc-p-udp',
+    DNS:  '--nc-p-dns',  ICMP: '--nc-p-icmp',
+    HTTP: '--nc-p-http', HTTPS:'--nc-p-https',
+    TLS:  '--nc-p-https',ARP:  '--nc-p-arp',
   }
 
   function rowClass(pkt: Packet, isSelected: boolean): string {
     if (isSelected) return 'bg-blue-900/50 border-l-2 border-blue-400'
-    return `${(ROW_TINT as Record<string, string>)[pkt.protocol] ?? ''} border-l-2 border-transparent hover:bg-[var(--nc-row-hover)] hover:border-blue-400/60 cursor-pointer`
+    return `${ROW_TINT[pkt.protocol] ?? ''} border-l-2 border-transparent hover:bg-[var(--nc-row-hover)] hover:border-blue-400/60 cursor-pointer`
   }
-  function badge(proto: string): string {
-    return (BADGE as Record<string, string>)[proto] ?? 'bg-gray-600'
+  function badgeStyle(proto: string): string {
+    return `background-color: var(${BADGE_VAR[proto] ?? '--nc-p-default'})`
   }
 
   // ── Scroll handling ────────────────────────────────────────────────────────
@@ -179,7 +179,8 @@
           {pkt.dst_ip}{pkt.dst_port != null ? ':' + pkt.dst_port : ''}
         </div>
         <div class="px-3 py-1.5">
-          <span class="px-1.5 py-0.5 rounded text-[10px] font-bold text-white {badge(pkt.protocol)}">
+          <span class="px-1.5 py-0.5 rounded text-[10px] font-bold text-white"
+            style={badgeStyle(pkt.protocol)}>
             {pkt.protocol}
           </span>
         </div>

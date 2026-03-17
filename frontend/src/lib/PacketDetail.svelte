@@ -6,18 +6,19 @@
   // bg and dot use CSS vars so they track the active theme automatically.
   // color-mix() blends the protocol colour with transparent for the cell tints.
   const LAYER = {
-    eth:     { bg: 'color-mix(in srgb, var(--nc-proto-eth) 20%, transparent)',     dot: 'var(--nc-proto-eth)',     label: 'Ethernet'  },
-    ip:      { bg: 'color-mix(in srgb, var(--nc-proto-ip) 20%, transparent)',      dot: 'var(--nc-proto-ip)',      label: 'IPv4'      },
-    trans:   { bg: 'color-mix(in srgb, var(--nc-proto-trans) 20%, transparent)',   dot: 'var(--nc-proto-trans)',   label: 'Transport' },
-    payload: { bg: 'color-mix(in srgb, var(--nc-proto-payload) 20%, transparent)', dot: 'var(--nc-proto-payload)', label: 'Payload'   },
+    eth:     { bg: 'var(--nc-p-tcp-tint)',   dot: 'var(--nc-proto-eth)',     label: 'Ethernet'  },
+    ip:      { bg: 'var(--nc-p-udp-tint)',   dot: 'var(--nc-proto-ip)',      label: 'IPv4'      },
+    trans:   { bg: 'var(--nc-p-icmp-tint)',  dot: 'var(--nc-proto-trans)',   label: 'Transport' },
+    payload: { bg: 'var(--nc-p-dns-tint)',   dot: 'var(--nc-proto-payload)', label: 'Payload'   },
   }
 
-  const BADGE = {
-    TCP:'bg-blue-600', UDP:'bg-green-600', DNS:'bg-purple-600',
-    ICMP:'bg-amber-600', HTTP:'bg-orange-600', HTTPS:'bg-cyan-600',
-    TLS:'bg-cyan-600', ARP:'bg-pink-600',
+  const BADGE_VAR: Record<string, string> = {
+    TCP: '--nc-p-tcp', UDP: '--nc-p-udp', DNS: '--nc-p-dns',
+    ICMP: '--nc-p-icmp', HTTP: '--nc-p-http', HTTPS: '--nc-p-https',
+    TLS: '--nc-p-https', ARP: '--nc-p-arp',
   }
-  const badge = (p: string): string => BADGE[p as keyof typeof BADGE] ?? 'bg-gray-600'
+  const badge = (p: string): string =>
+    `background-color: var(${BADGE_VAR[p] ?? '--nc-p-default'})`
 
   // ── Hex string → byte array ────────────────────────────────────────────────
   function toBytes(hex: string | undefined): number[] {
@@ -293,7 +294,8 @@
   <!-- ── Header ──────────────────────────────────────────────────────────── -->
   <div class="flex items-center gap-2 px-3 py-1.5 bg-[var(--nc-surface)] border-b border-[var(--nc-border)] shrink-0 flex-wrap">
     <span class="text-[var(--nc-fg-4)] text-[10px] uppercase tracking-wider">Frame #{p.id}</span>
-    <span class="px-1.5 py-0.5 rounded text-[10px] font-bold text-white {badge(p.protocol)}">{p.protocol}</span>
+    <span class="px-1.5 py-0.5 rounded text-[10px] font-bold text-white"
+      style={badge(p.protocol)}>{p.protocol}</span>
     <span class="text-[var(--nc-fg-4)]">{p.abs_time ?? p.timestamp}</span>
 
     {#if bytes.length > 0}
@@ -345,7 +347,7 @@
             <div class="ml-4 border-l border-[var(--nc-border-2)] pl-2 pb-0.5">
               {#each sec.fields as [label, value]}
                 <div class="flex gap-1 py-px leading-4">
-                  <span class="text-[var(--nc-fg-5)] shrink-0 w-[4.5rem] truncate">{label}</span>
+                  <span class="text-[var(--nc-fg-3)] shrink-0 w-[4.5rem] truncate">{label}</span>
                   <span class="text-[var(--nc-fg-1)] break-all">{value}</span>
                 </div>
               {/each}

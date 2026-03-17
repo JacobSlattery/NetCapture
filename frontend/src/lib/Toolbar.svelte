@@ -7,27 +7,29 @@
 
   const dispatch = createEventDispatcher()
 
-  $: dotClass = {
-    connected:    'bg-green-400 animate-pulse',
-    connecting:   'bg-yellow-400 animate-pulse',
-    error:        'bg-red-400',
-    disconnected: 'bg-gray-600',
-  }[$connectionStatus] ?? 'bg-gray-600'
+  $: statusDotStyle = ({
+    connected:    'background-color: var(--nc-status-ok)',
+    connecting:   'background-color: var(--nc-status-warn)',
+    error:        'background-color: var(--nc-status-err)',
+    disconnected: 'background-color: var(--nc-status-off)',
+  } as Record<string, string>)[$connectionStatus] ?? 'background-color: var(--nc-status-off)'
+  $: statusPulse = $connectionStatus === 'connected' || $connectionStatus === 'connecting'
 
   const MODE_LABEL = { real: 'Raw', listen: 'Listen', error: 'No capture' }
-  const MODE_CLASS = {
-    real:    'text-green-400 border-green-800',
-    listen:  'text-blue-400  border-blue-800',
-    error:   'text-red-400   border-red-800',
+  const MODE_STYLE: Record<string, string> = {
+    real:   'color: var(--nc-status-ok);   border-color: color-mix(in srgb, var(--nc-status-ok)   35%, transparent)',
+    listen: 'color: var(--nc-p-tcp);       border-color: color-mix(in srgb, var(--nc-p-tcp)       35%, transparent)',
+    error:  'color: var(--nc-status-err);  border-color: color-mix(in srgb, var(--nc-status-err)  35%, transparent)',
   }
   $: modeLabel = (MODE_LABEL as Record<string, string>)[$captureMode] ?? null
-  $: modeClass = (MODE_CLASS as Record<string, string>)[$captureMode] ?? ''
+  $: modeStyle = MODE_STYLE[$captureMode] ?? ''
 </script>
 
 <header class="flex flex-wrap items-center gap-2 px-4 py-2 bg-[var(--nc-surface-1)] border-b border-[var(--nc-border)] select-none shrink-0">
   <!-- Brand -->
   <div class="flex items-center gap-2 mr-1">
-    <div class="w-2.5 h-2.5 rounded-full {dotClass}"></div>
+    <div class="w-2.5 h-2.5 rounded-full {statusPulse ? 'animate-pulse' : ''}"
+      style={statusDotStyle}></div>
     <span class="text-[var(--nc-fg)] font-bold text-base tracking-tight">NetCapture</span>
   </div>
 
@@ -87,7 +89,8 @@
 
   <!-- Capture mode badge -->
   {#if modeLabel}
-    <span class="px-2 py-0.5 rounded border text-[10px] font-semibold tracking-wide select-none {modeClass}">
+    <span class="px-2 py-0.5 rounded border text-[10px] font-semibold tracking-wide select-none"
+      style={modeStyle}>
       {modeLabel}
     </span>
   {/if}

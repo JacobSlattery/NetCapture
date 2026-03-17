@@ -14,14 +14,14 @@
     return String(n)
   }
 
-  const PROTO_COLOR = {
-    TCP: 'bg-blue-500', UDP: 'bg-green-500', DNS: 'bg-purple-500',
-    ICMP: 'bg-amber-500', HTTP: 'bg-orange-500', HTTPS: 'bg-cyan-500',
-    TLS: 'bg-cyan-500', ARP: 'bg-pink-500',
+  const PROTO_VAR: Record<string, string> = {
+    TCP: '--nc-p-tcp', UDP: '--nc-p-udp', DNS: '--nc-p-dns',
+    ICMP: '--nc-p-icmp', HTTP: '--nc-p-http', HTTPS: '--nc-p-https',
+    TLS: '--nc-p-https', ARP: '--nc-p-arp',
   }
 
-  function protoColor(name: string): string {
-    return (PROTO_COLOR as Record<string, string>)[name] ?? 'bg-gray-500'
+  function protoStyle(name: string): string {
+    return `background-color: var(${PROTO_VAR[name] ?? '--nc-p-default'})`
   }
 
   $: topProtos = Object.entries($stats.protocol_counts ?? {})
@@ -30,19 +30,21 @@
 
   $: protoTotal = topProtos.reduce((s, [, v]) => s + v, 0) || 1
 
-  $: statusColor = {
-    connected:    'text-green-400',
-    connecting:   'text-yellow-400',
-    error:        'text-red-400',
-    disconnected: 'text-gray-600',
-  }[$connectionStatus] ?? 'text-gray-600'
+  $: statusTextStyle = ({
+    connected:    'color: var(--nc-status-ok)',
+    connecting:   'color: var(--nc-status-warn)',
+    error:        'color: var(--nc-status-err)',
+    disconnected: 'color: var(--nc-status-off)',
+  } as Record<string, string>)[$connectionStatus] ?? 'color: var(--nc-status-off)'
 
-  $: statusDot = {
-    connected:    'bg-green-400 animate-pulse',
-    connecting:   'bg-yellow-400 animate-pulse',
-    error:        'bg-red-400',
-    disconnected: 'bg-gray-600',
-  }[$connectionStatus] ?? 'bg-gray-600'
+  $: statusDotStyle = ({
+    connected:    'background-color: var(--nc-status-ok)',
+    connecting:   'background-color: var(--nc-status-warn)',
+    error:        'background-color: var(--nc-status-err)',
+    disconnected: 'background-color: var(--nc-status-off)',
+  } as Record<string, string>)[$connectionStatus] ?? 'background-color: var(--nc-status-off)'
+
+  $: statusPulse = $connectionStatus === 'connected' || $connectionStatus === 'connecting'
 </script>
 
 <div class="flex items-center gap-4 px-4 py-1.5 bg-[var(--nc-surface)] border-b border-[var(--nc-border)] text-xs overflow-x-auto shrink-0 font-mono">
@@ -60,7 +62,7 @@
     <span class="text-[var(--nc-fg)] font-bold">{$stats.packets_per_sec}/s</span>
   </div>
   {#if $captureFilter ?? '' !== ''}
-    <div class="flex items-center gap-1 whitespace-nowrap text-blue-400">
+    <div class="flex items-center gap-1 whitespace-nowrap" style="color: var(--nc-p-tcp)">
       <span>SHOWN</span>
       <span class="font-bold">{fmtNum($filteredPackets.length)}</span>
     </div>
@@ -73,12 +75,12 @@
   {#each topProtos as [proto, count]}
     {@const pct = Math.round((count / protoTotal) * 100)}
     <div class="flex items-center gap-1.5 whitespace-nowrap">
-      <div class="w-2 h-2 rounded-sm shrink-0 {protoColor(proto)}"></div>
+      <div class="w-2 h-2 rounded-sm shrink-0" style={protoStyle(proto)}></div>
       <span class="text-[var(--nc-fg-2)]">{proto}</span>
       <div class="w-14 bg-[var(--nc-surface-2)] rounded-full h-1.5 shrink-0">
         <div
-          class="h-1.5 rounded-full transition-[width] duration-300 {protoColor(proto)}"
-          style="width: {pct}%"
+          class="h-1.5 rounded-full transition-[width] duration-300"
+          style="width: {pct}%; {protoStyle(proto)}"
         ></div>
       </div>
       <span class="text-[var(--nc-fg-4)]">{pct}%</span>
@@ -87,7 +89,8 @@
 
   <!-- Connection status — pushed right -->
   <div class="ml-auto flex items-center gap-1.5 whitespace-nowrap shrink-0">
-    <div class="w-1.5 h-1.5 rounded-full {statusDot}"></div>
-    <span class="uppercase tracking-widest {statusColor}">{$connectionStatus}</span>
+    <div class="w-1.5 h-1.5 rounded-full {statusPulse ? 'animate-pulse' : ''}"
+      style={statusDotStyle}></div>
+    <span class="uppercase tracking-widest" style={statusTextStyle}>{$connectionStatus}</span>
   </div>
 </div>
