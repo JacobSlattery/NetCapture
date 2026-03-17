@@ -1,5 +1,6 @@
-<script>
-  import { selectedPacket } from '../stores.js'
+<script lang="ts">
+  import { selectedPacket } from '../stores'
+  import type { Packet } from '../types'
 
   // ── Layer colour definitions ───────────────────────────────────────────────
   const LAYER = {
@@ -14,12 +15,12 @@
     ICMP:'bg-amber-600', HTTP:'bg-orange-600', HTTPS:'bg-cyan-600',
     TLS:'bg-cyan-600', ARP:'bg-pink-600',
   }
-  const badge = p => BADGE[p] ?? 'bg-gray-600'
+  const badge = (p: string): string => BADGE[p as keyof typeof BADGE] ?? 'bg-gray-600'
 
   // ── Hex string → byte array ────────────────────────────────────────────────
-  function toBytes(hex) {
+  function toBytes(hex: string | undefined): number[] {
     if (!hex) return []
-    const out = []
+    const out: number[] = []
     for (let i = 0; i + 1 < hex.length; i += 2)
       out.push(parseInt(hex.slice(i, i + 2), 16))
     return out
@@ -29,15 +30,18 @@
   // Ethernet:  bytes[0] is a MAC octet — first nibble is never 4 or 6
   // IPv4:      bytes[0] >> 4 === 4
   // IPv6:      bytes[0] >> 4 === 6
-  function hasEthHeader(bytes) {
+  type LayerKey = keyof typeof LAYER | null
+  type HexCell = { hex: string; ascii: string; bg: string | null; tip: string; layer: LayerKey } | null
+
+  function hasEthHeader(bytes: number[]): boolean {
     if (!bytes.length) return false
     const v = bytes[0] >> 4
     return v !== 4 && v !== 6
   }
 
   // ── Assign a layer key to every byte index ─────────────────────────────────
-  function layerMap(bytes) {
-    const m = new Array(bytes.length).fill(null)
+  function layerMap(bytes: number[]): LayerKey[] {
+    const m: LayerKey[] = new Array(bytes.length).fill(null)
     if (!bytes.length) return m
 
     let off = 0
@@ -74,14 +78,14 @@
   }
 
   // ── Build 16-byte rows for the hex dump ────────────────────────────────────
-  function hexRows(bytes, lmap) {
-    const rows = []
+  function hexRows(bytes: number[], lmap: LayerKey[]): { off: number; cells: HexCell[] }[] {
+    const rows: { off: number; cells: HexCell[] }[] = []
     for (let i = 0; i < bytes.length; i += 16) {
-      const cells = bytes.slice(i, i + 16).map((b, j) => ({
+      const cells: HexCell[] = bytes.slice(i, i + 16).map((b, j) => ({
         hex:   b.toString(16).padStart(2, '0'),
         ascii: b >= 32 && b < 127 ? String.fromCharCode(b) : '·',
-        bg:    LAYER[lmap[i + j]]?.bg ?? null,
-        tip:   LAYER[lmap[i + j]]?.label ?? '',
+        bg:    lmap[i + j] ? LAYER[lmap[i + j]!]?.bg ?? null : null,
+        tip:   lmap[i + j] ? LAYER[lmap[i + j]!]?.label ?? '' : '',
         layer: lmap[i + j],
       }))
       while (cells.length < 16) cells.push(null)   // pad last row
@@ -91,11 +95,19 @@
   }
 
   // ── Protocol tree builder ──────────────────────────────────────────────────
-  function buildTree(bytes, pkt) {
-    const S = []
-    const add = (id, label, color, fields) => S.push({ id, label, color, fields })
+  interface TreeSection {
+    id: string
+    label: string
+    color: string
+    fields: [string, string][]
+  }
 
-    add('frame', 'Frame', 'text-gray-300', [
+  function buildTree(bytes: number[], pkt: Packet): TreeSection[] {
+    const S: TreeSection[] = []
+    const add = (id: string, label: string, color: string, fields: [string, string][]) =>
+      S.push({ id, label, color, fields })
+
+    add('frame', 'Frame', 'text-[var(--nc-fg-1)]', [
       ['Number',   `#${pkt.id}`],
       ['Captured', pkt.abs_time ?? pkt.timestamp],
       ['Wire len', `${pkt.length} bytes`],
@@ -218,38 +230,40 @@
   $: rows          = hexRows(bytes, lmap)
   $: tree          = p ? buildTree(bytes, p) : []
   // Only show toggles for layers that actually appear in this packet's bytes
-  $: presentLayers = Object.keys(LAYER).filter(k => lmap.includes(k))
+  $: presentLayers = (Object.keys(LAYER) as (keyof typeof LAYER)[]).filter(k => lmap.includes(k))
 
-  let expanded = {}
+  let expanded: Record<string, boolean> = {}
 
-  function toggle(id) { expanded = { ...expanded, [id]: !(expanded[id] ?? true) } }
-  $: open = id => expanded[id] ?? true
+  function toggle(id: string): void { expanded = { ...expanded, [id]: !(expanded[id] ?? true) } }
+  $: open = (id: string): boolean => expanded[id] ?? true
 
   // ── Layer visibility (persists across packet selections) ───────────────────
   // Stored as plain object so Svelte reactivity picks up assignments
   let activeLayers = { eth: true, ip: true, trans: true, payload: true }
-  function toggleLayer(key) { activeLayers = { ...activeLayers, [key]: !activeLayers[key] } }
+  function toggleLayer(key: keyof typeof activeLayers): void {
+    activeLayers = { ...activeLayers, [key]: !activeLayers[key] }
+  }
 
   // Helper: style for a hex/ascii cell given current layer visibility
-  function cellStyle(cell, isActive) {
+  function cellStyle(cell: HexCell, isActive: boolean): string {
     if (!cell) return ''
     return isActive && cell.bg ? `background:${cell.bg}` : ''
   }
 
   // ── Resize drag ────────────────────────────────────────────────────────────
-  let height   = 280
-  let dragging = false
-  let startY   = 0
-  let startH   = 0
+  let height:   number  = 280
+  let dragging: boolean = false
+  let startY:   number  = 0
+  let startH:   number  = 0
 
-  function dragStart(e) {
+  function dragStart(e: MouseEvent): void {
     dragging = true
     startY   = e.clientY
     startH   = height
     e.preventDefault()
   }
 
-  function dragMove(e) {
+  function dragMove(e: MouseEvent): void {
     if (!dragging) return
     // Dragging up (negative delta) → panel grows
     height = Math.max(120, Math.min(window.innerHeight - 120, startH + (startY - e.clientY)))
@@ -262,23 +276,23 @@
 
 {#if p}
 <div
-  class="shrink-0 flex flex-col border-t border-[#30363d] bg-[#161b22] font-mono text-xs"
+  class="shrink-0 flex flex-col border-t border-[var(--nc-border)] bg-[var(--nc-surface-1)] font-mono text-xs"
   style="height:{height}px"
 >
   <!-- ── Drag handle ─────────────────────────────────────────────────────── -->
   <button
-    class="h-1.5 w-full shrink-0 flex items-center justify-center bg-[#0d1117]
-           cursor-ns-resize hover:bg-[#21262d] transition-colors group border-none p-0"
+    class="h-1.5 w-full shrink-0 flex items-center justify-center bg-[var(--nc-surface)]
+           cursor-ns-resize hover:bg-[var(--nc-surface-2)] transition-colors group border-none p-0"
     on:mousedown={dragStart}
     aria-label="Drag to resize panel"
   >
-    <div class="w-10 h-0.5 rounded-full bg-[#30363d] group-hover:bg-[#6e7681] transition-colors"></div>
+    <div class="w-10 h-0.5 rounded-full bg-[var(--nc-border)] group-hover:bg-[var(--nc-fg-3)] transition-colors"></div>
   </button>
   <!-- ── Header ──────────────────────────────────────────────────────────── -->
-  <div class="flex items-center gap-2 px-3 py-1.5 bg-[#0d1117] border-b border-[#30363d] shrink-0 flex-wrap">
-    <span class="text-gray-600 text-[10px] uppercase tracking-wider">Frame #{p.id}</span>
+  <div class="flex items-center gap-2 px-3 py-1.5 bg-[var(--nc-surface)] border-b border-[var(--nc-border)] shrink-0 flex-wrap">
+    <span class="text-[var(--nc-fg-4)] text-[10px] uppercase tracking-wider">Frame #{p.id}</span>
     <span class="px-1.5 py-0.5 rounded text-[10px] font-bold text-white {badge(p.protocol)}">{p.protocol}</span>
-    <span class="text-gray-600">{p.abs_time ?? p.timestamp}</span>
+    <span class="text-[var(--nc-fg-4)]">{p.abs_time ?? p.timestamp}</span>
 
     {#if bytes.length > 0}
       <!-- Layer toggle buttons — only for layers present in this packet -->
@@ -289,24 +303,24 @@
           <button
             class="flex items-center gap-1 px-1.5 py-0.5 rounded border transition-all select-none
                    {on ? 'opacity-100' : 'opacity-35'}"
-            style="border-color:{on ? l.dot + '55' : '#30363d'}"
+            style="border-color:{on ? l.dot + '55' : 'var(--nc-border)'}"
             on:click={() => toggleLayer(key)}
             title="{on ? 'Hide' : 'Show'} {l.label}"
           >
             <div class="w-2 h-2 rounded-sm border shrink-0 transition-all"
               style="background:{on ? l.bg : 'transparent'}; border-color:{l.dot}88"></div>
-            <span class="text-[10px] text-gray-400">{l.label}</span>
+            <span class="text-[10px] text-[var(--nc-fg-2)]">{l.label}</span>
           </button>
         {/each}
       </div>
     {:else}
-      <span class="text-gray-700 italic ml-2 text-[10px]">
+      <span class="text-[var(--nc-fg-5)] italic ml-2 text-[10px]">
         raw bytes unavailable — backend capture required
       </span>
     {/if}
 
     <button
-      class="ml-auto text-gray-700 hover:text-gray-400 transition-colors px-1"
+      class="ml-auto text-[var(--nc-fg-5)] hover:text-[var(--nc-fg-2)] transition-colors px-1"
       on:click={() => selectedPacket.set(null)}
     >✕</button>
   </div>
@@ -315,22 +329,22 @@
   <div class="flex flex-1 min-h-0">
 
     <!-- Protocol tree (left panel) -->
-    <div class="w-56 shrink-0 border-r border-[#30363d] overflow-y-auto">
+    <div class="w-56 shrink-0 border-r border-[var(--nc-border)] overflow-y-auto">
       {#each tree as sec}
         <div>
           <button
-            class="flex w-full items-center gap-1 px-2 py-0.5 hover:bg-[#21262d] transition-colors text-left"
+            class="flex w-full items-center gap-1 px-2 py-0.5 hover:bg-[var(--nc-surface-2)] transition-colors text-left"
             on:click={() => toggle(sec.id)}
           >
-            <span class="text-gray-700 text-[10px] w-3 shrink-0">{open(sec.id) ? '▼' : '▶'}</span>
+            <span class="text-[var(--nc-fg-5)] text-[10px] w-3 shrink-0">{open(sec.id) ? '▼' : '▶'}</span>
             <span class="{sec.color} font-semibold truncate text-[11px]">{sec.label}</span>
           </button>
           {#if open(sec.id)}
-            <div class="ml-4 border-l border-[#2d333b] pl-2 pb-0.5">
+            <div class="ml-4 border-l border-[var(--nc-border-2)] pl-2 pb-0.5">
               {#each sec.fields as [label, value]}
                 <div class="flex gap-1 py-px leading-4">
-                  <span class="text-gray-700 shrink-0 w-[4.5rem] truncate">{label}</span>
-                  <span class="text-gray-300 break-all">{value}</span>
+                  <span class="text-[var(--nc-fg-5)] shrink-0 w-[4.5rem] truncate">{label}</span>
+                  <span class="text-[var(--nc-fg-1)] break-all">{value}</span>
                 </div>
               {/each}
             </div>
@@ -347,13 +361,13 @@
             {#each rows as row}
               <tr>
                 <!-- Offset -->
-                <td class="text-gray-700 select-none pr-3 text-right whitespace-nowrap">
+                <td class="text-[var(--nc-fg-5)] select-none pr-3 text-right whitespace-nowrap">
                   {row.off.toString(16).padStart(4, '0')}
                 </td>
 
                 <!-- First 8 hex bytes -->
                 {#each row.cells.slice(0, 8) as cell}
-                  {@const on = activeLayers[cell?.layer] ?? true}
+                  {@const on = cell?.layer ? activeLayers[cell.layer] ?? true : true}
                   <td class="w-[1.35rem] text-center transition-opacity"
                     style="{cellStyle(cell, on)}{!on ? ';opacity:0.18' : ''}"
                     title={cell?.tip ?? ''}>
@@ -366,7 +380,7 @@
 
                 <!-- Second 8 hex bytes -->
                 {#each row.cells.slice(8, 16) as cell}
-                  {@const on = activeLayers[cell?.layer] ?? true}
+                  {@const on = cell?.layer ? activeLayers[cell.layer] ?? true : true}
                   <td class="w-[1.35rem] text-center transition-opacity"
                     style="{cellStyle(cell, on)}{!on ? ';opacity:0.18' : ''}"
                     title={cell?.tip ?? ''}>
@@ -375,10 +389,10 @@
                 {/each}
 
                 <!-- ASCII column -->
-                <td class="pl-4 text-gray-600 select-none whitespace-pre tracking-wide">
+                <td class="pl-4 text-[var(--nc-fg-4)] select-none whitespace-pre tracking-wide">
                   {#each row.cells as cell}
                     {#if cell}
-                      {@const on = activeLayers[cell.layer] ?? true}
+                      {@const on = cell.layer ? activeLayers[cell.layer] ?? true : true}
                       <span
                         style="{cellStyle(cell, on)}{!on ? ';opacity:0.18' : ''}"
                         title={cell.tip}
@@ -393,7 +407,7 @@
           </tbody>
         </table>
       {:else}
-        <div class="flex items-center justify-center h-full text-gray-700 italic select-none">
+        <div class="flex items-center justify-center h-full text-[var(--nc-fg-5)] italic select-none">
           No raw bytes — start a backend capture to inspect packet data.
         </div>
       {/if}

@@ -2,6 +2,40 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Theme tokens ─────────────────────────────────────────────────────────── */
+:root {
+  /* Surfaces */
+  --nc-surface:   #ffffff;
+  --nc-surface-1: #f6f8fa;
+  --nc-surface-2: #eaeef2;
+  /* Borders */
+  --nc-border:   #d0d7de;
+  --nc-border-1: #e1e4e8;
+  --nc-border-2: #d8dee4;
+  /* Foreground */
+  --nc-fg:   #1f2328;
+  --nc-fg-1: #444c56;
+  --nc-fg-2: #636e7b;
+  --nc-fg-3: #848d97;
+  --nc-fg-4: #afb8c1;
+  --nc-fg-5: #d0d7de;
+}
+
+[data-theme="dark"] {
+  --nc-surface:   #0d1117;
+  --nc-surface-1: #161b22;
+  --nc-surface-2: #21262d;
+  --nc-border:   #30363d;
+  --nc-border-1: #1c2128;
+  --nc-border-2: #2d333b;
+  --nc-fg:   #e6edf3;
+  --nc-fg-1: #c9d1d9;
+  --nc-fg-2: #8b949e;
+  --nc-fg-3: #6e7681;
+  --nc-fg-4: #484f58;
+  --nc-fg-5: #30363d;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -11,8 +45,8 @@ html, body, #app {
   margin: 0;
   padding: 0;
   font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
-  background-color: #0d1117;
-  color: #e6edf3;
+  background-color: var(--nc-surface);
+  color: var(--nc-fg);
 }
 
 /* Slim scrollbars */
@@ -21,14 +55,14 @@ html, body, #app {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #0d1117;
+  background: var(--nc-surface);
 }
 ::-webkit-scrollbar-thumb {
-  background: #30363d;
+  background: var(--nc-border);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #484f58;
+  background: var(--nc-fg-4);
 }
 
 /* Remove default select arrow appearance on Firefox */

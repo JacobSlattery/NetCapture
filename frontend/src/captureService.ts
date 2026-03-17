@@ -1,36 +1,37 @@
 /**
- * captureService.js — module-level singleton
+ * captureService.ts — module-level singleton
  *
  * Owns the WebSocket connection and all capture-related state.
  * Defined at module scope so it persists across page navigations in the
  * parent SPA — capture keeps running even when the capture page is unmounted.
  *
  * Exports: startCapture, stopCapture, clearCapture, fetchInterfaces
- * Drives:  packets, stats, chartHistory, isCapturing, isMockMode,
- *          connectionStatus  (all from stores.js)
+ * Drives:  packets, stats, chartHistory, isCapturing, captureMode,
+ *          connectionStatus  (all from stores.ts)
  */
 
 import {
   packets, stats, chartHistory,
   isCapturing, captureMode, connectionStatus,
-} from './stores.js'
+} from './stores'
+import type { Packet, ChartPoint, NetworkInterface, WsMessage } from './types'
 
 const MAX_PACKETS      = 10_000
 const MAX_CHART_POINTS = 50
 
 // ── Module-level state ────────────────────────────────────────────────────────
 
-let ws             = null
-let reconnectTimer = null
-let displayTimer   = null
+let ws:             WebSocket | null = null
+let reconnectTimer: ReturnType<typeof setTimeout>  | null = null
+let displayTimer:   ReturnType<typeof setInterval> | null = null
 
-let _displayBuf   = []   // flushed to packets store at 4 Hz
-let _lastPacketId = 0    // highest received ID — deduplicates buffer replays
-let _trafficHist  = []   // accumulated per-second chart points
+let _displayBuf:   Packet[]     = []   // flushed to packets store at 4 Hz
+let _lastPacketId: number       = 0    // highest received ID — deduplicates buffer replays
+let _trafficHist:  ChartPoint[] = []   // accumulated per-second chart points
 
 // ── Packet ingestion ──────────────────────────────────────────────────────────
 
-function ingest(batch) {
+function ingest(batch: Packet[]): void {
   // Skip packets the store already has (handles buffer replay on reconnect)
   const fresh = batch.filter(p => p.id > _lastPacketId)
   if (!fresh.length) return
@@ -42,7 +43,7 @@ function ingest(batch) {
 
 // ── Display tick (4 Hz) ───────────────────────────────────────────────────────
 
-function startDisplayTick() {
+function startDisplayTick(): void {
   if (displayTimer) return
   displayTimer = setInterval(() => {
     if (!_displayBuf.length) return
@@ -54,17 +55,17 @@ function startDisplayTick() {
   }, 250)
 }
 
-function stopDisplayTick() {
-  clearInterval(displayTimer)
+function stopDisplayTick(): void {
+  clearInterval(displayTimer ?? undefined)
   displayTimer = null
   _displayBuf  = []
 }
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 
-function connect() {
+function connect(): void {
   if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return
-  clearTimeout(reconnectTimer)
+  clearTimeout(reconnectTimer ?? undefined)
   connectionStatus.set('connecting')
 
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -72,9 +73,9 @@ function connect() {
 
   ws.onopen = () => connectionStatus.set('connected')
 
-  ws.onmessage = ({ data }) => {
+  ws.onmessage = ({ data }: MessageEvent<string>) => {
     try {
-      const msg = JSON.parse(data)
+      const msg = JSON.parse(data) as WsMessage
       switch (msg.type) {
         case 'status': {
           const { running, mode } = msg.data
@@ -115,7 +116,7 @@ function connect() {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-export async function startCapture(iface = 'any', filter = '') {
+export async function startCapture(iface = 'any', filter = ''): Promise<void> {
   try {
     const res = await fetch('/api/capture/start', {
       method:  'POST',
@@ -123,14 +124,14 @@ export async function startCapture(iface = 'any', filter = '') {
       body:    JSON.stringify({ interface: iface, filter }),
     })
     if (res.ok) {
-      const body = await res.json()
+      const body = await res.json() as { status: string; message?: string; mode: string }
       if (body.status === 'error') {
         captureMode.set('error')
         console.error('[capture]', body.message)
         return
       }
       isCapturing.set(true)
-      captureMode.set(body.mode)
+      captureMode.set(body.mode as import('./types').CaptureMode)
       startDisplayTick()
     }
   } catch {
@@ -138,14 +139,14 @@ export async function startCapture(iface = 'any', filter = '') {
   }
 }
 
-export async function stopCapture() {
+export async function stopCapture(): Promise<void> {
   try { await fetch('/api/capture/stop', { method: 'POST' }) } catch {}
   isCapturing.set(false)
   captureMode.set('idle')
   stopDisplayTick()
 }
 
-export function clearCapture() {
+export function clearCapture(): void {
   packets.set([])
   _displayBuf   = []
   _lastPacketId = 0
@@ -155,11 +156,11 @@ export function clearCapture() {
   fetch('/api/reset-session', { method: 'POST' }).catch(() => {})
 }
 
-export async function fetchInterfaces() {
+export async function fetchInterfaces(): Promise<NetworkInterface[]> {
   try {
     const res = await fetch('/api/interfaces')
     if (!res.ok) return []
-    const data = await res.json()
+    const data = await res.json() as { interfaces?: NetworkInterface[] }
     return data.interfaces ?? []
   } catch {
     return []

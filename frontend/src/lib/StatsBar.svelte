@@ -1,14 +1,14 @@
-<script>
-  import { stats, connectionStatus, filteredPackets, captureFilter } from '../stores.js'
+<script lang="ts">
+  import { stats, connectionStatus, filteredPackets, captureFilter } from '../stores'
 
-  function fmtBytes(b) {
+  function fmtBytes(b: number): string {
     if (b < 1024) return `${b} B`
     if (b < 1048576) return `${(b / 1024).toFixed(1)} KB`
     if (b < 1073741824) return `${(b / 1048576).toFixed(2)} MB`
     return `${(b / 1073741824).toFixed(2)} GB`
   }
 
-  function fmtNum(n) {
+  function fmtNum(n: number): string {
     if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`
     if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`
     return String(n)
@@ -20,8 +20,8 @@
     TLS: 'bg-cyan-500', ARP: 'bg-pink-500',
   }
 
-  function protoColor(name) {
-    return PROTO_COLOR[name] ?? 'bg-gray-500'
+  function protoColor(name: string): string {
+    return (PROTO_COLOR as Record<string, string>)[name] ?? 'bg-gray-500'
   }
 
   $: topProtos = Object.entries($stats.protocol_counts ?? {})
@@ -45,19 +45,19 @@
   }[$connectionStatus] ?? 'bg-gray-600'
 </script>
 
-<div class="flex items-center gap-4 px-4 py-1.5 bg-[#0d1117] border-b border-[#30363d] text-xs overflow-x-auto shrink-0 font-mono">
+<div class="flex items-center gap-4 px-4 py-1.5 bg-[var(--nc-surface)] border-b border-[var(--nc-border)] text-xs overflow-x-auto shrink-0 font-mono">
   <!-- Counters -->
   <div class="flex items-center gap-1 whitespace-nowrap">
-    <span class="text-gray-600">PKT</span>
-    <span class="text-white font-bold">{fmtNum($stats.total_packets)}</span>
+    <span class="text-[var(--nc-fg-4)]">PKT</span>
+    <span class="text-[var(--nc-fg)] font-bold">{fmtNum($stats.total_packets)}</span>
   </div>
   <div class="flex items-center gap-1 whitespace-nowrap">
-    <span class="text-gray-600">SIZE</span>
-    <span class="text-white font-bold">{fmtBytes($stats.total_bytes)}</span>
+    <span class="text-[var(--nc-fg-4)]">SIZE</span>
+    <span class="text-[var(--nc-fg)] font-bold">{fmtBytes($stats.total_bytes)}</span>
   </div>
   <div class="flex items-center gap-1 whitespace-nowrap">
-    <span class="text-gray-600">RATE</span>
-    <span class="text-white font-bold">{$stats.packets_per_sec}/s</span>
+    <span class="text-[var(--nc-fg-4)]">RATE</span>
+    <span class="text-[var(--nc-fg)] font-bold">{$stats.packets_per_sec}/s</span>
   </div>
   {#if $captureFilter ?? '' !== ''}
     <div class="flex items-center gap-1 whitespace-nowrap text-blue-400">
@@ -67,21 +67,21 @@
   {/if}
 
   <!-- Divider -->
-  <div class="w-px h-4 bg-[#30363d] shrink-0"></div>
+  <div class="w-px h-4 bg-[var(--nc-border)] shrink-0"></div>
 
   <!-- Protocol bars -->
   {#each topProtos as [proto, count]}
     {@const pct = Math.round((count / protoTotal) * 100)}
     <div class="flex items-center gap-1.5 whitespace-nowrap">
       <div class="w-2 h-2 rounded-sm shrink-0 {protoColor(proto)}"></div>
-      <span class="text-gray-400">{proto}</span>
-      <div class="w-14 bg-[#21262d] rounded-full h-1.5 shrink-0">
+      <span class="text-[var(--nc-fg-2)]">{proto}</span>
+      <div class="w-14 bg-[var(--nc-surface-2)] rounded-full h-1.5 shrink-0">
         <div
           class="h-1.5 rounded-full transition-[width] duration-300 {protoColor(proto)}"
           style="width: {pct}%"
         ></div>
       </div>
-      <span class="text-gray-600">{pct}%</span>
+      <span class="text-[var(--nc-fg-4)]">{pct}%</span>
     </div>
   {/each}
 

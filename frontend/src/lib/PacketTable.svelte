@@ -1,6 +1,7 @@
-<script>
+<script lang="ts">
   import { afterUpdate, tick } from 'svelte'
-  import { filteredPackets, selectedPacket, isCapturing } from '../stores.js'
+  import { filteredPackets, selectedPacket, isCapturing } from '../stores'
+  import type { Packet } from '../types'
 
   // ── Virtual scroll constants ───────────────────────────────────────────────
   // ROW_H must match the actual rendered row height:
@@ -10,7 +11,7 @@
   const BUFFER = 40    // extra rows rendered above/below the visible area
 
   // ── State ──────────────────────────────────────────────────────────────────
-  let bodyEl
+  let bodyEl:    HTMLDivElement
   let autoScroll = true
   let scrollTop  = 0
   let padTop     = 0
@@ -30,15 +31,17 @@
     TLS:   'bg-cyan-600',  ARP:   'bg-pink-600',
   }
 
-  function rowClass(pkt, isSelected) {
+  function rowClass(pkt: Packet, isSelected: boolean): string {
     if (isSelected) return 'bg-blue-900/50 border-l-2 border-blue-400'
-    return `${ROW_TINT[pkt.protocol] ?? ''} border-l-2 border-transparent hover:brightness-125 cursor-pointer`
+    return `${(ROW_TINT as Record<string, string>)[pkt.protocol] ?? ''} border-l-2 border-transparent hover:brightness-125 cursor-pointer`
   }
-  function badge(proto) { return BADGE[proto] ?? 'bg-gray-600' }
+  function badge(proto: string): string {
+    return (BADGE as Record<string, string>)[proto] ?? 'bg-gray-600'
+  }
 
   // ── Scroll handling ────────────────────────────────────────────────────────
-  function handleScroll(e) {
-    const el   = e.target
+  function handleScroll(e: Event): void {
+    const el = e.target as HTMLElement
     scrollTop  = el.scrollTop
     autoScroll = el.scrollHeight - el.scrollTop - el.clientHeight < 60
   }
@@ -47,7 +50,7 @@
   // scroll manually. We intercept wheel events instead and use them to switch
   // to browse mode, remapping the wheel delta to the correct position in the
   // full virtual layout (relative to the tail, not the 200-row DOM window).
-  function handleWheel(e) {
+  function handleWheel(e: WheelEvent): void {
     if (!($isCapturing && autoScroll)) return   // already in browse mode — ignore
     if (e.deltaY >= 0) return                   // scrolling down while live — ignore
     e.preventDefault()
@@ -70,7 +73,7 @@
     tick().then(() => { if (bodyEl) bodyEl.scrollTop = bodyEl.scrollHeight })
   }
 
-  function selectAndPin(pkt) {
+  function selectAndPin(pkt: Packet): void {
     selectedPacket.set(pkt)
     if (!($isCapturing && autoScroll)) return  // already in browse mode, nothing extra
 
@@ -89,7 +92,7 @@
   // ── Virtual display window ─────────────────────────────────────────────────
   $: total = $filteredPackets.length
 
-  let display = []
+  let display: Packet[] = []
 
   $: {
     if ($isCapturing && autoScroll) {
@@ -130,8 +133,8 @@
 <div class="flex flex-col flex-1 min-h-0 font-mono text-xs">
   <!-- Header row -->
   <div
-    class="grid shrink-0 text-[10px] font-semibold text-gray-600 uppercase tracking-widest
-           bg-[#161b22] border-b border-[#30363d] z-10"
+    class="grid shrink-0 text-[10px] font-semibold text-[var(--nc-fg-4)] uppercase tracking-widest
+           bg-[var(--nc-surface-1)] border-b border-[var(--nc-border)] z-10"
     style="grid-template-columns:{COLS}"
   >
     <div class="px-3 py-2">No.</div>
@@ -162,17 +165,17 @@
       <!-- svelte-ignore a11y-click-events-have-key-events -->
       <!-- svelte-ignore a11y-interactive-supports-focus -->
       <div
-        class="grid items-center border-b border-[#1c2128] {rowClass(pkt, $selectedPacket?.id === pkt.id)} transition-colors duration-75"
+        class="grid items-center border-b border-[var(--nc-border-1)] {rowClass(pkt, $selectedPacket?.id === pkt.id)} transition-colors duration-75"
         style="grid-template-columns:{COLS}"
         on:click={() => selectAndPin(pkt)}
         role="row"
       >
-        <div class="px-3 py-1.5 text-gray-600 tabular-nums">{pkt.id}</div>
-        <div class="px-3 py-1.5 text-gray-500 tabular-nums">{pkt.timestamp}</div>
-        <div class="px-3 py-1.5 text-gray-200 truncate">
+        <div class="px-3 py-1.5 text-[var(--nc-fg-4)] tabular-nums">{pkt.id}</div>
+        <div class="px-3 py-1.5 text-[var(--nc-fg-3)] tabular-nums">{pkt.timestamp}</div>
+        <div class="px-3 py-1.5 text-[var(--nc-fg-1)] truncate">
           {pkt.src_ip}{pkt.src_port != null ? ':' + pkt.src_port : ''}
         </div>
-        <div class="px-3 py-1.5 text-gray-200 truncate">
+        <div class="px-3 py-1.5 text-[var(--nc-fg-1)] truncate">
           {pkt.dst_ip}{pkt.dst_port != null ? ':' + pkt.dst_port : ''}
         </div>
         <div class="px-3 py-1.5">
@@ -180,11 +183,11 @@
             {pkt.protocol}
           </span>
         </div>
-        <div class="px-3 py-1.5 text-gray-500 tabular-nums">{pkt.length}</div>
-        <div class="px-3 py-1.5 text-gray-400 truncate">{pkt.info}</div>
+        <div class="px-3 py-1.5 text-[var(--nc-fg-3)] tabular-nums">{pkt.length}</div>
+        <div class="px-3 py-1.5 text-[var(--nc-fg-2)] truncate">{pkt.info}</div>
       </div>
     {:else}
-      <div class="flex items-center justify-center h-32 text-gray-700 select-none">
+      <div class="flex items-center justify-center h-32 text-[var(--nc-fg-5)] select-none">
         {#if $isCapturing}Waiting for packets…{:else}Press Start to begin capturing.{/if}
       </div>
     {/each}
@@ -215,7 +218,7 @@
 
   <!-- Footer: packet count when stopped with data -->
   {#if !$isCapturing && total > 0}
-    <div class="shrink-0 text-center py-1 text-[10px] text-gray-700 bg-[#0d1117] border-t border-[#21262d] select-none">
+    <div class="shrink-0 text-center py-1 text-[10px] text-[var(--nc-fg-5)] bg-[var(--nc-surface)] border-t border-[var(--nc-border-1)] select-none">
       {total.toLocaleString()} packets — scroll to browse
     </div>
   {/if}

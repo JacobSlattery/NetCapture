@@ -1,9 +1,9 @@
-<script>
+<script lang="ts">
   import { createEventDispatcher } from 'svelte'
   import {
     isCapturing, connectionStatus, selectedInterface,
     interfaces, captureFilter, captureMode,
-  } from '../stores.js'
+  } from '../stores'
 
   const dispatch = createEventDispatcher()
 
@@ -20,22 +20,22 @@
     listen:  'text-blue-400  border-blue-800',
     error:   'text-red-400   border-red-800',
   }
-  $: modeLabel = MODE_LABEL[$captureMode] ?? null
-  $: modeClass = MODE_CLASS[$captureMode] ?? ''
+  $: modeLabel = (MODE_LABEL as Record<string, string>)[$captureMode] ?? null
+  $: modeClass = (MODE_CLASS as Record<string, string>)[$captureMode] ?? ''
 </script>
 
-<header class="flex flex-wrap items-center gap-2 px-4 py-2 bg-[#161b22] border-b border-[#30363d] select-none shrink-0">
+<header class="flex flex-wrap items-center gap-2 px-4 py-2 bg-[var(--nc-surface-1)] border-b border-[var(--nc-border)] select-none shrink-0">
   <!-- Brand -->
   <div class="flex items-center gap-2 mr-1">
     <div class="w-2.5 h-2.5 rounded-full {dotClass}"></div>
-    <span class="text-white font-bold text-base tracking-tight">NetCapture</span>
+    <span class="text-[var(--nc-fg)] font-bold text-base tracking-tight">NetCapture</span>
   </div>
 
   <!-- Interface selector -->
   <select
     bind:value={$selectedInterface}
     disabled={$isCapturing}
-    class="bg-[#0d1117] text-gray-300 border border-[#30363d] rounded px-2 py-1 text-xs
+    class="bg-[var(--nc-surface)] text-[var(--nc-fg-1)] border border-[var(--nc-border)] rounded px-2 py-1 text-xs
            focus:outline-none focus:border-blue-500 disabled:opacity-40 cursor-pointer"
   >
     {#each $interfaces as iface}
@@ -76,8 +76,8 @@
   <button
     on:click={() => dispatch('clear')}
     disabled={$isCapturing}
-    class="flex items-center gap-1.5 bg-[#21262d] hover:bg-[#30363d] text-gray-300
-           px-3 py-1 rounded text-xs border border-[#30363d] transition-colors disabled:opacity-40"
+    class="flex items-center gap-1.5 bg-[var(--nc-surface-2)] hover:bg-[var(--nc-border)] text-[var(--nc-fg-1)]
+           px-3 py-1 rounded text-xs border border-[var(--nc-border)] transition-colors disabled:opacity-40"
   >
     <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
       <path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clip-rule="evenodd"/>
@@ -94,13 +94,13 @@
 
   <!-- Filter — pushed right -->
   <div class="flex items-center gap-2 ml-auto">
-    <span class="text-gray-600 text-xs">Filter:</span>
+    <span class="text-[var(--nc-fg-4)] text-xs">Filter:</span>
     <input
       type="text"
       bind:value={$captureFilter}
       placeholder="ip, protocol, port…"
-      class="bg-[#0d1117] text-gray-200 border border-[#30363d] rounded px-3 py-1 text-xs w-52
-             focus:outline-none focus:border-blue-500 placeholder-gray-700"
+      class="bg-[var(--nc-surface)] text-[var(--nc-fg)] border border-[var(--nc-border)] rounded px-3 py-1 text-xs w-52
+             focus:outline-none focus:border-blue-500 placeholder-[var(--nc-fg-4)]"
     />
   </div>
 </header>
