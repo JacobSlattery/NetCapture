@@ -33,7 +33,7 @@
 
   function rowClass(pkt: Packet, isSelected: boolean): string {
     if (isSelected) return 'bg-blue-900/50 border-l-2 border-blue-400'
-    return `${(ROW_TINT as Record<string, string>)[pkt.protocol] ?? ''} border-l-2 border-transparent hover:brightness-125 cursor-pointer`
+    return `${(ROW_TINT as Record<string, string>)[pkt.protocol] ?? ''} border-l-2 border-transparent hover:bg-[var(--nc-row-hover)] hover:border-blue-400/60 cursor-pointer`
   }
   function badge(proto: string): string {
     return (BADGE as Record<string, string>)[proto] ?? 'bg-gray-600'
@@ -204,8 +204,8 @@
     <!-- svelte-ignore a11y-interactive-supports-focus -->
     <div
       class="shrink-0 flex items-center justify-center gap-2 py-1.5
-             bg-blue-950/60 border-t border-blue-800/50 cursor-pointer
-             text-[11px] text-blue-300 hover:text-blue-100 hover:bg-blue-950/80
+             bg-blue-950/80 border-t border-blue-800/50 cursor-pointer
+             text-[11px] text-blue-100 hover:text-blue-300 hover:bg-blue-950/60
              transition-colors duration-100 select-none"
       on:click={jumpToLive}
       role="button"

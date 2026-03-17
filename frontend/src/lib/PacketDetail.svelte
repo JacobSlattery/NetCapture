@@ -3,11 +3,13 @@
   import type { Packet } from '../types'
 
   // ── Layer colour definitions ───────────────────────────────────────────────
+  // bg and dot use CSS vars so they track the active theme automatically.
+  // color-mix() blends the protocol colour with transparent for the cell tints.
   const LAYER = {
-    eth:     { bg: 'rgba(59,130,246,0.20)',  dot: '#3b82f6', label: 'Ethernet'   },
-    ip:      { bg: 'rgba(16,185,129,0.20)',  dot: '#10b981', label: 'IPv4'       },
-    trans:   { bg: 'rgba(245,158,11,0.20)',  dot: '#f59e0b', label: 'Transport'  },
-    payload: { bg: 'rgba(139,92,246,0.20)',  dot: '#8b5cf6', label: 'Payload'    },
+    eth:     { bg: 'color-mix(in srgb, var(--nc-proto-eth) 20%, transparent)',     dot: 'var(--nc-proto-eth)',     label: 'Ethernet'  },
+    ip:      { bg: 'color-mix(in srgb, var(--nc-proto-ip) 20%, transparent)',      dot: 'var(--nc-proto-ip)',      label: 'IPv4'      },
+    trans:   { bg: 'color-mix(in srgb, var(--nc-proto-trans) 20%, transparent)',   dot: 'var(--nc-proto-trans)',   label: 'Transport' },
+    payload: { bg: 'color-mix(in srgb, var(--nc-proto-payload) 20%, transparent)', dot: 'var(--nc-proto-payload)', label: 'Payload'   },
   }
 
   const BADGE = {
@@ -123,7 +125,7 @@
       const dstMac = bytes.slice(0, 6).map(b => b.toString(16).padStart(2,'0')).join(':')
       const srcMac = bytes.slice(6,12).map(b => b.toString(16).padStart(2,'0')).join(':')
       const et     = (bytes[12] << 8) | bytes[13]
-      add('eth', 'Ethernet II', 'text-blue-300', [
+      add('eth', 'Ethernet II', 'text-[var(--nc-proto-eth)]', [
         ['Dst MAC', dstMac],
         ['Src MAC', srcMac],
         ['Type',    `0x${et.toString(16).padStart(4,'0')} (${et===0x0800?'IPv4':et===0x0806?'ARP':et===0x86dd?'IPv6':'?'})`],
@@ -131,7 +133,7 @@
       off = 14
 
       if (et === 0x0806 && bytes.length >= off + 28) {
-        add('arp', 'Address Resolution Protocol', 'text-amber-300', [
+        add('arp', 'Address Resolution Protocol', 'text-[var(--nc-proto-trans)]', [
           ['Operation',  bytes[off+7] === 1 ? 'Request' : 'Reply'],
           ['Sender MAC', bytes.slice(off+8, off+14).map(b=>b.toString(16).padStart(2,'0')).join(':')],
           ['Sender IP',  bytes.slice(off+14,off+18).join('.')],
@@ -152,7 +154,7 @@
     const ipProto = bytes[off+9]
     const srcIp   = bytes.slice(off+12,off+16).join('.')
     const dstIp   = bytes.slice(off+16,off+20).join('.')
-    add('ip', `Internet Protocol v${ipVer}`, 'text-green-300', [
+    add('ip', `Internet Protocol v${ipVer}`, 'text-[var(--nc-proto-ip)]', [
       ['Source',    srcIp],
       ['Dest',      dstIp],
       ['TTL',       String(ttl)],
@@ -167,7 +169,7 @@
       const dp  = (bytes[off+2]<<8)|bytes[off+3]
       const ul  = (bytes[off+4]<<8)|bytes[off+5]
       const ck  = `0x${((bytes[off+6]<<8)|bytes[off+7]).toString(16).padStart(4,'0')}`
-      add('trans', 'User Datagram Protocol', 'text-amber-300', [
+      add('trans', 'User Datagram Protocol', 'text-[var(--nc-proto-trans)]', [
         ['Src Port', String(sp)],
         ['Dst Port', String(dp)],
         ['Length',   `${ul} bytes`],
@@ -188,7 +190,7 @@
       if (fl&0x10) fnames.push('ACK')
       if (fl&0x20) fnames.push('URG')
       const win = (bytes[off+14]<<8)|bytes[off+15]
-      add('trans', 'Transmission Control Protocol', 'text-amber-300', [
+      add('trans', 'Transmission Control Protocol', 'text-[var(--nc-proto-trans)]', [
         ['Src Port', String(sp)],
         ['Dst Port', String(dp)],
         ['Seq',      String(seq)],
@@ -202,7 +204,7 @@
       const code = bytes[off+1]
       const id   = (bytes[off+4]<<8)|bytes[off+5]
       const seq  = (bytes[off+6]<<8)|bytes[off+7]
-      add('trans', 'Internet Control Message Protocol', 'text-amber-300', [
+      add('trans', 'Internet Control Message Protocol', 'text-[var(--nc-proto-trans)]', [
         ['Type', `${type} (${type===8?'Echo Request':type===0?'Echo Reply':'?'})`],
         ['Code', String(code)],
         ['ID',   `0x${id.toString(16).padStart(4,'0')}`],
@@ -215,7 +217,7 @@
     if (off < bytes.length) {
       const pay = bytes.slice(off)
       const pre = pay.slice(0, 24).map(b => b.toString(16).padStart(2,'0')).join(' ')
-      add('payload', `Data (${pay.length} bytes)`, 'text-purple-300', [
+      add('payload', `Data (${pay.length} bytes)`, 'text-[var(--nc-proto-payload)]', [
         ['Length',  `${pay.length} bytes`],
         ['Preview', pre + (pay.length > 24 ? ' …' : '')],
       ])
@@ -303,12 +305,12 @@
           <button
             class="flex items-center gap-1 px-1.5 py-0.5 rounded border transition-all select-none
                    {on ? 'opacity-100' : 'opacity-35'}"
-            style="border-color:{on ? l.dot + '55' : 'var(--nc-border)'}"
+            style="border-color:{on ? 'color-mix(in srgb,' + l.dot + ' 30%, transparent)' : 'var(--nc-border)'}"
             on:click={() => toggleLayer(key)}
             title="{on ? 'Hide' : 'Show'} {l.label}"
           >
             <div class="w-2 h-2 rounded-sm border shrink-0 transition-all"
-              style="background:{on ? l.bg : 'transparent'}; border-color:{l.dot}88"></div>
+              style="background:{on ? l.bg : 'transparent'}; border-color:color-mix(in srgb,{l.dot} 53%, transparent)"></div>
             <span class="text-[10px] text-[var(--nc-fg-2)]">{l.label}</span>
           </button>
         {/each}

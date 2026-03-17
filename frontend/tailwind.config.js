@@ -21,5 +21,7 @@ export default {
     // Status indicator
     'bg-green-400', 'bg-yellow-400', 'bg-red-400',
     'text-green-400', 'text-yellow-400', 'text-red-400',
+    // Row hover (dynamic class string in rowClass())
+    'hover:bg-[var(--nc-row-hover)]', 'hover:border-blue-400/60',
   ],
 }

@@ -10,15 +10,22 @@
   --nc-surface-2: #eaeef2;
   /* Borders */
   --nc-border:   #d0d7de;
-  --nc-border-1: #e1e4e8;
-  --nc-border-2: #d8dee4;
-  /* Foreground */
-  --nc-fg:   #1f2328;
-  --nc-fg-1: #444c56;
-  --nc-fg-2: #636e7b;
-  --nc-fg-3: #848d97;
-  --nc-fg-4: #afb8c1;
-  --nc-fg-5: #d0d7de;
+  --nc-border-1: #c8cdd3;
+  --nc-border-2: #bcc3ca;
+  /* Foreground — all values must be readable on a white background */
+  --nc-fg:   #1f2328;   /* primary:  ~14:1 */
+  --nc-fg-1: #2d3a4a;   /* IP addrs, key values: ~11:1 */
+  --nc-fg-2: #4b5563;   /* info col, protocol names: ~7.5:1 */
+  --nc-fg-3: #57606a;   /* timestamps, lengths: ~6.5:1 */
+  --nc-fg-4: #6e7781;   /* labels (PKT, Filter…): ~4.6:1 */
+  --nc-fg-5: #7a8694;   /* ghost text (hex offsets, tree chevrons): ~3.8:1 */
+  /* Protocol tree section label colours (dark saturated for light bg) */
+  --nc-proto-eth:     #1d4ed8;   /* blue-700   ~8:1  */
+  --nc-proto-ip:      #15803d;   /* green-700  ~8:1  */
+  --nc-proto-trans:   #b45309;   /* amber-700  ~5.9:1 */
+  --nc-proto-payload: #7e22ce;   /* purple-700 ~9:1  */
+  /* Row hover: partial-selection blue tint */
+  --nc-row-hover: rgb(96 165 250 / 0.22);
 }
 
 [data-theme="dark"] {
@@ -34,6 +41,13 @@
   --nc-fg-3: #6e7681;
   --nc-fg-4: #484f58;
   --nc-fg-5: #30363d;
+  /* Protocol tree section label colours (pastels for dark bg) */
+  --nc-proto-eth:     #93c5fd;   /* blue-300   */
+  --nc-proto-ip:      #86efac;   /* green-300  */
+  --nc-proto-trans:   #fcd34d;   /* amber-300  */
+  --nc-proto-payload: #d8b4fe;   /* purple-300 */
+  /* Row hover: higher opacity needed to show against dark surfaces */
+  --nc-row-hover: rgb(96 165 250 / 0.30);
 }
 
 * {
@@ -69,3 +83,16 @@ html, body, #app {
 select {
   -moz-appearance: none;
 }
+
+/* ── Light-mode fixes for classes originally designed for dark backgrounds ── */
+
+/* Pastel -400 status colours are designed for dark backgrounds.
+   Replace with saturated -600/700 equivalents for light mode readability.
+   Scoped to light mode only so dark mode keeps the original pastel values. */
+:root:not([data-theme="dark"]) .text-green-400  { color: #16a34a; }   /* green-600  ~5.2:1 */
+:root:not([data-theme="dark"]) .text-yellow-400 { color: #b45309; }   /* amber-700  ~5.9:1 */
+:root:not([data-theme="dark"]) .text-blue-400   { color: #2563eb; }   /* blue-600   ~4.6:1 */
+:root:not([data-theme="dark"]) .text-red-400    { color: #dc2626; }   /* red-600    ~5.9:1 */
+
+:root:not([data-theme="dark"]) .bg-green-400    { background-color: #16a34a; }   /* green-600 */
+:root:not([data-theme="dark"]) .bg-yellow-400   { background-color: #ca8a04; }   /* yellow-600 */
