@@ -1,0 +1,43 @@
+[project]
+name = "netcapture"
+version = "0.1.0"
+description = "Wireshark-like real-time network capture and display tool"
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+[dependencies]
+python     = ">=3.11,<3.13"
+nodejs     = ">=20"           # frontend toolchain (Vite / npm)
+
+# ── Backend ────────────────────────────────────────────────────────────────
+fastapi    = ">=0.111"
+uvicorn    = ">=0.30"
+watchfiles = ">=0.21"         # enables uvicorn --reload
+websockets = ">=12"
+psutil     = ">=5.9"
+
+# NOTE: scapy on Windows requires Npcap  →  https://npcap.com
+#       Packet capture must run with administrator privileges.
+scapy  = ">=2.5"
+pytest = ">=8"
+
+# ── Tasks ──────────────────────────────────────────────────────────────────
+[tasks]
+
+# Frontend
+install-ui = { cmd = "npm install",   cwd = "frontend", description = "Install npm packages" }
+dev-ui     = { cmd = "npm run dev",   cwd = "frontend", description = "Vite dev server  →  http://localhost:5173" }
+build-ui   = { cmd = "npm run build", cwd = "frontend", description = "Production build  →  backend/static/" }
+
+# Backend
+dev-api    = { cmd = "python backend/main.py", description = "FastAPI + uvicorn  →  http://localhost:8000" }
+
+# Tests
+test = { cmd = "python -m pytest tests/ -v", description = "Run capture parsing unit tests" }
+
+# UDP mock device (no admin rights needed)
+# Default mode is 'feed' — sends directly to backend sink on port 9001
+mock-device = { cmd = "python tools/udp_device.py", description = "Run mock UDP device (--mode feed|chat|sender|receiver|echo)" }
+
+# Production: build frontend then serve everything from FastAPI
+serve = { cmd = "python backend/main.py", depends-on = ["build-ui"], description = "Build + serve on :8000" }
