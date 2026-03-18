@@ -25,7 +25,7 @@ Adding a profile
 
 from __future__ import annotations
 
-PROFILES: list[dict] = [
+DEFAULT_PROFILES: list[dict] = [
     {
         "id":          "udp-device",
         "name":        "UDP Device",

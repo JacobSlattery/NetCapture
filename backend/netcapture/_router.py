@@ -4,12 +4,28 @@ NetCapture FastAPI router — mount this into any FastAPI application.
 Usage:
     from netcapture import create_router
     app.include_router(create_router(), prefix="/netcapture")
+
+Customisation:
+    from netcapture import create_router, Interpreter, DecodedFrame, DecodedField
+
+    class MyInterpreter:
+        name = "My Protocol"
+        def match(self, pkt: dict, payload: bytes) -> bool: ...
+        def decode(self, payload: bytes) -> DecodedFrame: ...
+
+    app.include_router(create_router(
+        profiles=[
+            {"id": "dev", "name": "My Device", "interface": "eth0", "filter": "port == 5000"},
+        ],
+        extra_interpreters=[MyInterpreter()],
+    ), prefix="/netcapture")
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+from typing import Sequence
 
 import psutil
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -17,6 +33,7 @@ from pydantic import BaseModel
 
 from .capture import UDP_SINK_PORT
 from ._manager import manager, reset_session_start
+from .interpreters import Interpreter, register
 
 
 class StartRequest(BaseModel):
@@ -24,8 +41,36 @@ class StartRequest(BaseModel):
     filter:    str = ""
 
 
-def create_router() -> APIRouter:
-    """Return an APIRouter with all NetCapture HTTP and WebSocket routes."""
+def create_router(
+    *,
+    profiles: list[dict] | None = None,
+    extra_interpreters: Sequence[Interpreter] | None = None,
+) -> APIRouter:
+    """
+    Return an APIRouter with all NetCapture HTTP and WebSocket routes.
+
+    Parameters
+    ----------
+    profiles:
+        List of profile dicts to expose via /api/profiles.  Each dict must
+        have at least ``id``, ``name``, ``interface``, and ``filter`` keys.
+        If omitted, the built-in default profiles from profiles.py are used.
+    extra_interpreters:
+        Additional interpreter instances to register before capture starts.
+        Interpreters are tried in order (built-ins first, then these) and the
+        first one whose match() returns True handles the packet.
+        Each interpreter must implement the Interpreter protocol:
+          - name: str
+          - match(pkt: dict, payload: bytes) -> bool
+          - decode(payload: bytes) -> DecodedFrame
+    """
+    if extra_interpreters:
+        for interp in extra_interpreters:
+            register(interp)
+
+    if profiles is None:
+        from .profiles import DEFAULT_PROFILES
+        profiles = DEFAULT_PROFILES
 
     router = APIRouter()
 
@@ -63,8 +108,7 @@ def create_router() -> APIRouter:
 
     @router.get("/api/profiles")
     async def list_profiles():
-        from .profiles import PROFILES
-        return {"profiles": PROFILES}
+        return {"profiles": profiles}
 
     @router.get("/api/capture/status")
     async def capture_status():
