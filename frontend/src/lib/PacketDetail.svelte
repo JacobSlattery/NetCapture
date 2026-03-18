@@ -274,6 +274,31 @@
   $: rows          = hexRows(bytes, lmap)
   $: tree          = p ? buildTree(bytes, p) : []
   $: decoded       = p?.decoded ?? null
+
+  // Previous packet data for track-mode diffing
+  $: prevBytes = $trackPrev ? toBytes($trackPrev.raw_hex ?? '') : []
+  $: prevTree  = ($trackMode && $trackPrev) ? buildTree(prevBytes, $trackPrev) : []
+
+  // Byte indices that differ between current and previous raw bytes
+  $: changedByteIndices = (() => {
+    if (!$trackMode || !$trackPrev || !bytes.length) return new Set<number>()
+    const s = new Set<number>()
+    for (let i = 0; i < Math.max(bytes.length, prevBytes.length); i++) {
+      if (bytes[i] !== prevBytes[i]) s.add(i)
+    }
+    return s
+  })()
+
+  // Protocol-tree field diff: "sectionId:label" -> previous value
+  $: prevTreeMap = (() => {
+    const m = new Map<string, string>()
+    for (const sec of prevTree) {
+      for (const [label, value] of sec.fields) {
+        m.set(`${sec.id}:${label}`, value)
+      }
+    }
+    return m
+  })()
   // Only show toggles for layers that actually appear in this packet's bytes
   $: presentLayers = (Object.keys(LAYER) as (keyof typeof LAYER)[]).filter(k => lmap.includes(k))
 
@@ -425,7 +450,10 @@
           {#if open(sec.id)}
             <div class="ml-4 border-l border-[var(--nc-border-2)] pl-2 pb-0.5">
               {#each sec.fields as [label, value]}
-                <div class="flex gap-1 py-px leading-4">
+                {@const prevVal     = prevTreeMap.get(`${sec.id}:${label}`)}
+                {@const treeChanged = $trackMode && prevVal !== undefined && prevVal !== value}
+                <div class="flex gap-1 py-px leading-4"
+                  style={treeChanged ? 'background:color-mix(in srgb,var(--nc-status-err) 18%,transparent)' : ''}>
                   <span class="text-[var(--nc-fg-3)] shrink-0 w-[4.5rem] truncate">{label}</span>
                   <span class="text-[var(--nc-fg-1)] break-all">{value}</span>
                 </div>
@@ -491,10 +519,11 @@
                 </td>
 
                 <!-- First 8 hex bytes -->
-                {#each row.cells.slice(0, 8) as cell}
-                  {@const on = cell?.layer ? activeLayers[cell.layer] ?? true : true}
+                {#each row.cells.slice(0, 8) as cell, j}
+                  {@const on      = cell?.layer ? activeLayers[cell.layer] ?? true : true}
+                  {@const hexDiff = $trackMode && changedByteIndices.has(row.off + j)}
                   <td class="w-[1.35rem] text-center transition-opacity"
-                    style="{cellStyle(cell, on)}{!on ? ';opacity:0.18' : ''}"
+                    style="{hexDiff ? 'background:color-mix(in srgb,var(--nc-status-err) 28%,transparent)' : cellStyle(cell, on)}{!on ? ';opacity:0.18' : ''}"
                     title={cell?.tip ?? ''}>
                     {#if cell}{cell.hex}{:else}<span class="invisible">00</span>{/if}
                   </td>
@@ -504,10 +533,11 @@
                 <td class="w-3"></td>
 
                 <!-- Second 8 hex bytes -->
-                {#each row.cells.slice(8, 16) as cell}
-                  {@const on = cell?.layer ? activeLayers[cell.layer] ?? true : true}
+                {#each row.cells.slice(8, 16) as cell, j}
+                  {@const on      = cell?.layer ? activeLayers[cell.layer] ?? true : true}
+                  {@const hexDiff = $trackMode && changedByteIndices.has(row.off + 8 + j)}
                   <td class="w-[1.35rem] text-center transition-opacity"
-                    style="{cellStyle(cell, on)}{!on ? ';opacity:0.18' : ''}"
+                    style="{hexDiff ? 'background:color-mix(in srgb,var(--nc-status-err) 28%,transparent)' : cellStyle(cell, on)}{!on ? ';opacity:0.18' : ''}"
                     title={cell?.tip ?? ''}>
                     {#if cell}{cell.hex}{:else}<span class="invisible">00</span>{/if}
                   </td>
@@ -515,11 +545,12 @@
 
                 <!-- ASCII column -->
                 <td class="pl-4 text-[var(--nc-fg-4)] select-none whitespace-pre tracking-wide">
-                  {#each row.cells as cell}
+                  {#each row.cells as cell, j}
                     {#if cell}
-                      {@const on = cell.layer ? activeLayers[cell.layer] ?? true : true}
+                      {@const on      = cell.layer ? activeLayers[cell.layer] ?? true : true}
+                      {@const hexDiff = $trackMode && changedByteIndices.has(row.off + j)}
                       <span
-                        style="{cellStyle(cell, on)}{!on ? ';opacity:0.18' : ''}"
+                        style="{hexDiff ? 'background:color-mix(in srgb,var(--nc-status-err) 28%,transparent)' : cellStyle(cell, on)}{!on ? ';opacity:0.18' : ''}"
                         title={cell.tip}
                       >{cell.ascii}</span>
                     {:else}

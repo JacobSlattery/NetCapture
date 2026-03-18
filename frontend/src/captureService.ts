@@ -250,6 +250,7 @@ export function clearCapture(): void {
   _lastPacketId = 0
   _trafficHist  = []
   localStorage.removeItem('nc:trafficHist')
+  localStorage.removeItem('nc:chartLegend')
   stats.set({ total_packets: 0, total_bytes: 0, packets_per_sec: 0, bytes_per_sec: 0, protocol_counts: {} })
   chartHistory.set([])
   fetch('/api/reset-session', { method: 'POST' }).catch(() => {})

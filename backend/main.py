@@ -218,15 +218,20 @@ class CaptureManager:
     # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _matches_filter(self, pkt: dict) -> bool:
-        """Return True if pkt passes the active server-side filter (empty filter = pass all)."""
+        """Return True if pkt passes the active server-side filter (empty filter = pass all).
+
+        Port terms are matched exactly against src_port / dst_port so that a
+        filter like "9001" cannot accidentally match a sequence number such as
+        776489001.  Non-numeric terms are matched as a substring against the
+        protocol name (e.g. "udp", "tcp", "dns").
+        """
         if not self._filter_terms:
             return True
         src_port = str(pkt.get("src_port") or "")
         dst_port = str(pkt.get("dst_port") or "")
         protocol = (pkt.get("protocol") or "").lower()
-        info     = (pkt.get("info") or "").lower()
         return any(
-            t in src_port or t in dst_port or t in protocol or t in info
+            t == src_port or t == dst_port or t in protocol
             for t in self._filter_terms
         )
 

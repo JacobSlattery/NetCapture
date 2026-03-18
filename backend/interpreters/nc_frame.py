@@ -71,31 +71,42 @@ class NcFrameInterpreter:
         try:
             for _ in range(count):
                 # Key
-                key_len = payload[off]; off += 1
-                key     = payload[off : off + key_len].decode(); off += key_len
+                key_len = payload[off]
+                off += 1
+                key     = payload[off : off + key_len].decode()
+                off += key_len
 
                 # Tag
-                tag       = payload[off]; off += 1
+                tag       = payload[off]
+                off += 1
                 type_name = _TAG_NAMES.get(tag, f"0x{tag:02x}")
 
                 # Value
                 if tag == 0x01:    # u8
-                    value: str | int | float | bool = payload[off]; off += 1
+                    value: str | int | float | bool = payload[off] 
+                    off += 1
                 elif tag == 0x02:  # u16
-                    value = struct.unpack_from("!H", payload, off)[0]; off += 2
+                    value = struct.unpack_from("!H", payload, off)[0]
+                    off += 2
                 elif tag == 0x03:  # u32
-                    value = struct.unpack_from("!I", payload, off)[0]; off += 4
+                    value = struct.unpack_from("!I", payload, off)[0]
+                    off += 4
                 elif tag == 0x04:  # f32
                     value = round(struct.unpack_from("!f", payload, off)[0], 4)
                     off += 4
                 elif tag == 0x05:  # str
-                    slen  = payload[off]; off += 1
-                    value = payload[off : off + slen].decode(); off += slen
+                    slen  = payload[off]
+                    off += 1
+                    value = payload[off : off + slen].decode()
+                    off += slen
                 elif tag == 0x06:  # bool
-                    value = payload[off] != 0; off += 1
+                    value = payload[off] != 0
+                    off += 1
                 elif tag == 0x07:  # json (list / dict / any JSON value)
-                    jlen  = struct.unpack_from("!H", payload, off)[0]; off += 2
-                    value = json.loads(payload[off : off + jlen].decode()); off += jlen
+                    jlen  = struct.unpack_from("!H", payload, off)[0]
+                    off += 2
+                    value = json.loads(payload[off : off + jlen].decode())
+                    off += jlen
                 else:
                     return DecodedFrame(
                         self.name,

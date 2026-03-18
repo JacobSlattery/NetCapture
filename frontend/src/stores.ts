@@ -78,8 +78,8 @@ export const filteredPackets = derived(
         p.src_ip?.includes(f) ||
         p.dst_ip?.includes(f) ||
         p.info?.toLowerCase().includes(f) ||
-        String(p.src_port ?? '').includes(f) ||
-        String(p.dst_port ?? '').includes(f)
+        String(p.src_port ?? '') === f ||
+        String(p.dst_port ?? '') === f
       )
     )
   }

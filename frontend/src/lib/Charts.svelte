@@ -90,6 +90,8 @@
       }],
     })
 
+    const savedLegend = loadLegend()
+
     lineChart.setOption({
       backgroundColor: 'transparent',
       animation: false,
@@ -103,9 +105,10 @@
           params.map(p => `${p.marker}${p.seriesName}: <b>${p.value}${p.seriesIndex === 1 ? ' KB/s' : ' pkt/s'}</b>`).join('<br>'),
       },
       legend: {
-        top: 4, right: 8,
+        top: 4, left: 'center',
         textStyle: { color: t.fg2, fontSize: 10 },
         data: ['Pkts/s', 'KB/s'],
+        ...(savedLegend ? { selected: savedLegend } : {}),
       },
       xAxis: {
         type: 'category',
@@ -121,12 +124,16 @@
       yAxis: [
         {
           type: 'value',
+          name: 'Pkts/s',
+          nameTextStyle: { color: t.fg3, fontSize: 10 },
           axisLine: { lineStyle: { color: t.border } },
           axisLabel: { color: t.fg3, fontSize: 10 },
           splitLine: { lineStyle: { color: t.border1 } },
         },
         {
           type: 'value',
+          name: 'KB/s',
+          nameTextStyle: { color: t.fg3, fontSize: 10 },
           axisLine: { lineStyle: { color: t.border } },
           axisLabel: { color: t.fg3, fontSize: 10 },
           splitLine: { show: false },
@@ -153,19 +160,46 @@
         },
       ],
     })
+
+    lineChart.on('legendselectchanged', (e: { selected: Record<string, boolean> }) => {
+      saveLegend(e.selected)
+    })
+  }
+
+  const _LEGEND_KEY = 'nc:chartLegend'
+
+  function saveLegend(selected: Record<string, boolean>): void {
+    localStorage.setItem(_LEGEND_KEY, JSON.stringify(selected))
+  }
+
+  function loadLegend(): Record<string, boolean> | null {
+    try {
+      const raw = localStorage.getItem(_LEGEND_KEY)
+      return raw ? JSON.parse(raw) as Record<string, boolean> : null
+    } catch { return null }
   }
 
   function updatePie(counts: Record<string, number> | undefined): void {
     if (!pieChart) return
     const raw = Object.entries(counts ?? {}).sort((a, b) => b[1] - a[1])
-    if (!raw.length) return
+    if (!raw.length) {
+      pieChart.setOption({ series: [{ data: [] }] })
+      return
+    }
     pieChart.setOption({
       series: [{ data: raw.map(([name, value]) => ({ name, value, itemStyle: { color: protoColor(name) } })) }],
     })
   }
 
   function updateLine(history: import('../types').ChartPoint[] | undefined): void {
-    if (!lineChart || !history?.length) return
+    if (!lineChart) return
+    if (!history?.length) {
+      lineChart.setOption({
+        xAxis: { data: [] },
+        series: [{ data: [] }, { data: [] }],
+      })
+      return
+    }
 
     // Always fill a fixed 50-slot window so the chart width stays constant
     // and data accumulates from the right edge rather than expanding outward.
