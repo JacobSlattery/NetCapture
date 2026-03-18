@@ -1,7 +1,7 @@
 <script lang="ts">
   import { afterUpdate, tick } from 'svelte'
-  import { filteredPackets, selectedPacket, isCapturing, trackMode, trackFingerprint, trackPrev } from '../stores'
-  import type { Packet } from '../types'
+  import { filteredPackets, selectedPacket, isCapturing, trackMode, trackFingerprint, trackPrev } from './stores'
+  import type { Packet } from './types'
 
   // ── Virtual scroll constants ───────────────────────────────────────────────
   // ROW_H must match the actual rendered row height:

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { DecodedValue } from '../types'
+  import type { DecodedValue } from './types'
   export let value: DecodedValue
   export let depth: number = 0
 

@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(pixi run:*)"
+      "Bash(pixi run:*)",
+      "Bash(find . -type f ! -path ./.pixi/* ! -path ./.git/* ! -path ./node_modules/* ! -path ./.claude/* ! -path */dist/* ! -path */.next/* ! -path */build/* -name *.py -o -name *.ts -o -name *.js -o -name *.svelte -o -name *.json -o -name *.toml -o -name *.md -o -name *.txt -o -name *.yml -o -name *.yaml)",
+      "Bash(ls -la /c/Dev/NetCapture/*.json /c/Dev/NetCapture/*.toml)"
     ]
   }
 }

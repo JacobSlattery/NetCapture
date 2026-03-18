@@ -1,7 +1,8 @@
 import './app.css'
-import App from './App.svelte'
+import NetCapture from './lib/NetCapture.svelte'
 
-const app = new App({
+// Standalone mode — wsUrl and apiBase default to auto-detect from window.location
+const app = new NetCapture({
   target: document.getElementById('app')!,
 })
 

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "netcapture"
+version = "0.1.0"
+description = "NetCapture — embeddable real-time network capture and display library"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn>=0.30",
+    "websockets>=12",
+    "psutil>=5.9",
+]
+
+[project.optional-dependencies]
+npcap = ["scapy>=2.5"]
+
+[project.scripts]
+netcapture = "netcapture.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["netcapture"]
+
+[tool.hatch.build.targets.wheel.shared-data]
+# Include the built frontend — run `npm run build` (pixi run build-ui) first
+# so netcapture/static/ is populated before packaging.
+
+[tool.hatch.build.targets.sdist]
+include = ["netcapture/**"]

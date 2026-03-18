@@ -18,6 +18,7 @@ frontend/node_modules/
 # Vite build output
 frontend/dist/
 backend/static/
+backend/netcapture/static/
 
 # Pixi
 .pixi/

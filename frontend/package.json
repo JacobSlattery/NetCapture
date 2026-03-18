@@ -1,15 +1,25 @@
 {
   "name": "netcapture",
-  "private": true,
   "version": "0.1.0",
   "type": "module",
+  "svelte": "./src/lib/index.ts",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "svelte": "./src/lib/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "package": "svelte-package -i src/lib -o dist",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json"
   },
   "devDependencies": {
+    "@sveltejs/package": "^2.0.0",
     "@sveltejs/vite-plugin-svelte": "^3.1.0",
     "@types/node": "^25.5.0",
     "autoprefixer": "^10.4.19",
@@ -22,5 +32,8 @@
   },
   "dependencies": {
     "echarts": "^5.5.0"
+  },
+  "peerDependencies": {
+    "svelte": "^4.0.0"
   }
 }

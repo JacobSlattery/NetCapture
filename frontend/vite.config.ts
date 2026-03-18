@@ -18,7 +18,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: '../backend/static',
+    outDir: '../backend/netcapture/static',
     emptyOutDir: true,
     chunkSizeWarningLimit: 600,
   },

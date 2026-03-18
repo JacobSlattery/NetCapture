@@ -37,7 +37,7 @@
  *   proto != ICMP
  */
 
-import type { Packet, DecodedValue } from '../types'
+import type { Packet, DecodedValue } from './types'
 
 // ── DecodedValue flattening ────────────────────────────────────────────────────
 // For primitives returns [String(v)].

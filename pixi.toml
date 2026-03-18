@@ -1,6 +1,6 @@
 [project]
 name = "netcapture"
-version = "0.1.0"
+version = "1.0.0"
 description = "Wireshark-like real-time network capture and display tool"
 channels = ["conda-forge"]
 platforms = ["win-64"]
@@ -36,7 +36,7 @@ dev-ui     = { cmd = "npm run dev",   cwd = "frontend", description = "Vite dev 
 build-ui   = { cmd = "npm run build", cwd = "frontend", description = "Production build  →  backend/static/" }
 
 # Backend
-dev-api    = { cmd = "python backend/main.py", description = "FastAPI + uvicorn  →  http://localhost:8000" }
+dev-api    = { cmd = "python backend/server.py", description = "FastAPI + uvicorn  →  http://localhost:8000" }
 
 # Tests
 test = { cmd = "python -m pytest tests/ -v", description = "Run capture parsing unit tests" }
@@ -46,4 +46,4 @@ test = { cmd = "python -m pytest tests/ -v", description = "Run capture parsing 
 mock-device = { cmd = "python tools/udp_device.py", description = "Run mock UDP device (--mode feed|chat|sender|receiver|echo)" }
 
 # Production: build frontend then serve everything from FastAPI
-serve = { cmd = "python backend/main.py", depends-on = ["build-ui"], description = "Build + serve on :8000" }
+serve = { cmd = "python backend/server.py", depends-on = ["build-ui"], description = "Build + serve on :8000" }

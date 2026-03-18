@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { selectedPacket, trackMode, trackFingerprint, trackPrev } from '../stores'
-  import type { Packet, TrackFingerprint } from '../types'
+  import { selectedPacket, trackMode, trackFingerprint, trackPrev } from './stores'
+  import type { Packet, TrackFingerprint } from './types'
   import FieldValue from './FieldValue.svelte'
 
   // ── Layer colour definitions ───────────────────────────────────────────────

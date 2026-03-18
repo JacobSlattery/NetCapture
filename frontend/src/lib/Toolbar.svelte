@@ -3,9 +3,9 @@
   import {
     isCapturing, connectionStatus, selectedInterface,
     interfaces, captureFilter, captureMode, profiles, activeProfile, packets,
-  } from '../stores'
-  import type { CaptureProfile, DecodedValue } from '../types'
-  import { exportCapture, importCapture } from '../captureService'
+  } from './stores'
+  import type { CaptureProfile, DecodedValue } from './types'
+  import { exportCapture, importCapture } from './captureService'
   import { parseFilter, tokenize, KNOWN_FIELDS } from './filter'
 
   let fileInput: HTMLInputElement
