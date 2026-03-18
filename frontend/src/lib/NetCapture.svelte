@@ -2,10 +2,10 @@
   import { onMount } from 'svelte'
   import { interfaces, selectedInterface, captureFilter, profiles, activeProfile } from './stores'
   import { initCaptureService, startCapture, stopCapture, clearCapture, fetchInterfaces, fetchProfiles } from './captureService'
-  import Toolbar      from './Toolbar.svelte'
-  import StatsBar     from './StatsBar.svelte'
-  import PacketTable  from './PacketTable.svelte'
-  import PacketDetail from './PacketDetail.svelte'
+  import Toolbar      from './components/Toolbar.svelte'
+  import StatsBar     from './components/StatsBar.svelte'
+  import PacketTable  from './components/PacketTable.svelte'
+  import PacketDetail from './components/PacketDetail.svelte'
 
   /**
    * Full WebSocket URL to the NetCapture backend.
@@ -22,11 +22,11 @@
   export let apiBase: string = ''
 
   let showCharts: boolean = localStorage.getItem('nc:showCharts') === 'true'
-  let ChartsComponent: typeof import('./Charts.svelte').default | null = null
+  let ChartsComponent: typeof import('./components/Charts.svelte').default | null = null
 
   async function openCharts() {
     if (!ChartsComponent) {
-      const mod = await import('./Charts.svelte')
+      const mod = await import('./components/Charts.svelte')
       ChartsComponent = mod.default
     }
     showCharts = true
@@ -59,7 +59,7 @@
     }
 
     if (showCharts) {
-      const mod = await import('./Charts.svelte')
+      const mod = await import('./components/Charts.svelte')
       ChartsComponent = mod.default
     }
   })

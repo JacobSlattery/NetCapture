@@ -241,26 +241,37 @@ When both are empty (standalone mode) the component connects to the same host it
 NetCapture/
 ├── backend/
 │   ├── netcapture/          # Python package
-│   │   ├── __init__.py      # exports create_router, CaptureManager
+│   │   ├── __init__.py      # public exports: create_router, register_interpreter, etc.
 │   │   ├── __main__.py      # python -m netcapture entry point
-│   │   ├── _router.py       # FastAPI APIRouter factory
+│   │   ├── _router.py       # FastAPI APIRouter factory (accepts profiles + interpreters)
 │   │   ├── _manager.py      # CaptureManager, capture loop, session state
 │   │   ├── _filter.py       # Wireshark-style filter parser + evaluator
 │   │   ├── capture.py       # Raw socket capture
 │   │   ├── capture_scapy.py # Scapy/Npcap capture
+│   │   ├── profiles.py      # DEFAULT_PROFILES list
 │   │   ├── interpreters/    # Packet payload decoders
+│   │   │   ├── __init__.py  # registry: register(), find_interpreter(), Interpreter protocol
+│   │   │   └── nc_frame.py  # built-in NC-Frame binary decoder
 │   │   └── static/          # Built frontend (git-ignored, populated by build-ui)
 │   ├── server.py            # Standalone FastAPI entry point
 │   └── pyproject.toml       # Package metadata and dependencies
 ├── frontend/
 │   ├── src/
 │   │   ├── lib/             # Exportable component library
-│   │   │   ├── NetCapture.svelte
-│   │   │   ├── captureService.ts
-│   │   │   ├── stores.ts
-│   │   │   ├── filter.ts
-│   │   │   ├── types.ts
-│   │   │   └── index.ts     # Library entry point
+│   │   │   ├── index.ts         # Library entry point — exports NetCapture
+│   │   │   ├── NetCapture.svelte  # Main public component (wsUrl, apiBase props)
+│   │   │   ├── captureService.ts  # WebSocket + REST service layer
+│   │   │   ├── stores.ts          # Svelte writable/derived stores
+│   │   │   ├── filter.ts          # Wireshark-style filter parser + evaluator
+│   │   │   ├── types.ts           # TypeScript type definitions
+│   │   │   └── components/        # Internal UI components
+│   │   │       ├── Toolbar.svelte
+│   │   │       ├── StatsBar.svelte
+│   │   │       ├── PacketTable.svelte
+│   │   │       ├── PacketDetail.svelte
+│   │   │       ├── Charts.svelte
+│   │   │       └── FieldValue.svelte
+│   │   ├── app.css          # Global styles + CSS custom properties (theme vars)
 │   │   └── main.ts          # Standalone app entry point
 │   └── package.json
 ├── tools/

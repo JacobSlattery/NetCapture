@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { stats, connectionStatus, filteredPackets, captureFilter } from './stores'
+  import { stats, connectionStatus, filteredPackets, captureFilter } from '../stores'
 
   function fmtBytes(b: number): string {
     if (b < 1024) return `${b} B`

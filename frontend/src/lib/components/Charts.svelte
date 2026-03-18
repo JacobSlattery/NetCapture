@@ -5,7 +5,7 @@
   import { TooltipComponent, LegendComponent, GridComponent } from 'echarts/components'
   import { CanvasRenderer, SVGRenderer } from 'echarts/renderers'
   import type { ECharts } from 'echarts/core'
-  import { stats, chartHistory } from './stores'
+  import { stats, chartHistory } from '../stores'
 
   echarts.use([PieChart, BarChart, LineChart, TooltipComponent, LegendComponent, GridComponent, CanvasRenderer, SVGRenderer])
 
