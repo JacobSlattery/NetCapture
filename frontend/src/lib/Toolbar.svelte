@@ -55,8 +55,9 @@
   } as Record<string, string>)[$connectionStatus] ?? 'background-color: var(--nc-status-off)'
   $: statusPulse = $connectionStatus === 'connected' || $connectionStatus === 'connecting'
 
-  const MODE_LABEL = { real: 'Raw', listen: 'Listen', error: 'No capture' }
+  const MODE_LABEL = { scapy: 'Npcap', real: 'Raw', listen: 'Listen', error: 'No capture' }
   const MODE_STYLE: Record<string, string> = {
+    scapy:  'color: var(--nc-p-dns);       border-color: color-mix(in srgb, var(--nc-p-dns)       35%, transparent)',
     real:   'color: var(--nc-status-ok);   border-color: color-mix(in srgb, var(--nc-status-ok)   35%, transparent)',
     listen: 'color: var(--nc-p-tcp);       border-color: color-mix(in srgb, var(--nc-p-tcp)       35%, transparent)',
     error:  'color: var(--nc-status-err);  border-color: color-mix(in srgb, var(--nc-status-err)  35%, transparent)',

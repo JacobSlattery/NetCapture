@@ -16,10 +16,19 @@ watchfiles = ">=0.21"         # enables uvicorn --reload
 websockets = ">=12"
 psutil     = ">=5.9"
 
-# NOTE: scapy on Windows requires Npcap  →  https://npcap.com
-#       Packet capture must run with administrator privileges.
-scapy  = ">=2.5"
 pytest = ">=8"
+
+# ── Optional Npcap / scapy capture (full L2) ───────────────────────────────
+# Install Npcap first: https://npcap.com
+# Then run backend in the npcap environment:  pixi run --environment npcap dev-api
+[feature.npcap.dependencies]
+scapy = ">=2.5"
+
+[feature.npcap.tasks]
+dev-npcap = { cmd = "python backend/main.py", description = "FastAPI with Npcap/scapy capture  →  http://localhost:8000" }
+
+[environments]
+npcap = { features = ["npcap"] }
 
 # ── Tasks ──────────────────────────────────────────────────────────────────
 [tasks]

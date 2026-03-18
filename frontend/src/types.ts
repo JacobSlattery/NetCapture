@@ -74,7 +74,7 @@ export interface ChartPoint {
   bytes: number
 }
 
-export type CaptureMode = 'idle' | 'real' | 'listen' | 'error'
+export type CaptureMode = 'idle' | 'scapy' | 'real' | 'listen' | 'error'
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
 

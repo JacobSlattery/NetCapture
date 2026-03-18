@@ -17,8 +17,9 @@ REST API:
 WebSocket:
   /ws/capture  — on connect: sends status + buffer replay, then live stream
 
-Capture modes (selected automatically at start):
-  real   — Windows raw sockets + SIO_RCVALL (needs Administrator)
+Capture modes (selected automatically at start, highest priority first):
+  scapy  — Npcap + scapy full L2 capture (requires npcap pixi env + Npcap installed)
+  real   — Windows raw sockets + SIO_RCVALL (needs Administrator, IP-only)
   listen — UDP sink on UDP_SINK_PORT; feed with: pixi run mock-device --mode feed
 """
 
@@ -41,6 +42,14 @@ from pydantic import BaseModel
 from capture import RawCapture, get_capture_ip, build_udp_raw_hex, UDP_SINK_PORT
 from interpreters import find_interpreter
 from profiles import PROFILES
+
+# Optional scapy/Npcap backend — only available in the npcap pixi environment
+try:
+    from capture_scapy import ScapyCapture, SCAPY_AVAILABLE, probe_npcap
+except ImportError:
+    SCAPY_AVAILABLE = False
+    ScapyCapture    = None  # type: ignore[assignment,misc]
+    def probe_npcap() -> bool: return False  # noqa: E704
 
 app = FastAPI(title="NetCapture", version="0.1.0")
 app.add_middleware(
@@ -68,8 +77,17 @@ def _get_session_start() -> float:
 def _determine_mode(iface: str) -> str:
     """
     Probe available capture capabilities (blocking — run in executor).
-    Returns 'real', 'listen', or 'unavailable'.
+    Returns 'scapy', 'real', 'listen', or 'unavailable'.
+
+    Priority:
+      scapy  — npcap installed + scapy package available (full L2 capture)
+      real   — Windows raw sockets + SIO_RCVALL (needs Administrator, IP-only)
+      listen — UDP sink on UDP_SINK_PORT (no admin required)
     """
+    # Prefer scapy/npcap: captures ARP, full Ethernet frames, all interfaces
+    if SCAPY_AVAILABLE and probe_npcap():
+        return "scapy"
+
     bind_ip = get_capture_ip(iface)
     if bind_ip:
         try:
@@ -167,7 +185,10 @@ class CaptureManager:
         self._running = True
         print(f"[capture] starting — mode={mode!r}  iface={iface!r}")
 
-        if mode == "real":
+        if mode == "scapy":
+            scapy_iface = None if iface == "any" else iface
+            self._task = asyncio.create_task(self._scapy_loop(scapy_iface))
+        elif mode == "real":
             bind_ip = get_capture_ip(iface)
             assert bind_ip is not None   # guaranteed: _determine_mode only returns "real" when bind_ip exists
             self._task = asyncio.create_task(self._real_loop(bind_ip))
@@ -338,6 +359,46 @@ class CaptureManager:
             pass
         finally:
             transport.close()
+
+    async def _scapy_loop(self, iface: str | None) -> None:
+        """Full L2 capture using scapy + Npcap.  Same structure as _real_loop."""
+        cap = ScapyCapture(iface)
+        cap.start(session_start=_get_session_start())
+        loop       = asyncio.get_event_loop()
+        last_tick  = loop.time()
+        last_flush = loop.time()
+        batch: list[dict] = []
+        FLUSH_INTERVAL = 0.05
+
+        # Supplement with UDP sink so loopback device traffic is captured
+        sink_task = asyncio.create_task(self._run_sink(emit_stats=False))
+
+        try:
+            while self._running:
+                pkt = await loop.run_in_executor(None, cap.get_packet, 0.05)
+                if pkt:
+                    del pkt["id"]   # manager assigns session-level ID
+                    batch.append(pkt)
+
+                now = loop.time()
+                if batch and now - last_flush >= FLUSH_INTERVAL:
+                    for p in batch:
+                        self._emit_packet(p)
+                    batch.clear()
+                    last_flush = now
+
+                if now - last_tick >= 1.0:
+                    self._emit_stats()
+                    last_tick = now
+        except asyncio.CancelledError:
+            pass
+        finally:
+            sink_task.cancel()
+            try:
+                await sink_task
+            except asyncio.CancelledError:
+                pass
+            cap.stop()
 
     async def _real_loop(self, bind_ip: str) -> None:
         cap  = RawCapture(bind_ip)
