@@ -1,6 +1,6 @@
 <script lang="ts">
   import { afterUpdate, tick } from 'svelte'
-  import { filteredPackets, selectedPacket, isCapturing } from '../stores'
+  import { filteredPackets, selectedPacket, isCapturing, trackMode, trackFingerprint, trackPrev } from '../stores'
   import type { Packet } from '../types'
 
   // ── Virtual scroll constants ───────────────────────────────────────────────
@@ -74,6 +74,12 @@
   }
 
   function selectAndPin(pkt: Packet): void {
+    // If the user explicitly clicks a different packet, stop tracking
+    if ($trackMode && $selectedPacket?.id !== pkt.id) {
+      trackMode.set(false)
+      trackFingerprint.set(null)
+      trackPrev.set(null)
+    }
     selectedPacket.set(pkt)
     if (!($isCapturing && autoScroll)) return  // already in browse mode, nothing extra
 

@@ -24,9 +24,6 @@ pytest = ">=8"
 [feature.npcap.dependencies]
 scapy = ">=2.5"
 
-[feature.npcap.tasks]
-dev-npcap = { cmd = "python backend/main.py", description = "FastAPI with Npcap/scapy capture  →  http://localhost:8000" }
-
 [environments]
 npcap = { features = ["npcap"] }
 

@@ -1,4 +1,5 @@
 import { writable, derived } from 'svelte/store'
+import { parseFilter, matchesFilter } from './lib/filter'
 import type {
   Packet, NetworkInterface, Stats, ChartPoint,
   CaptureMode, ConnectionStatus, CaptureProfile, TrackFingerprint,
@@ -64,23 +65,13 @@ export const trackMode        = writable<boolean>(false)
 export const trackFingerprint = writable<TrackFingerprint | null>(null)
 export const trackPrev        = writable<Packet | null>(null)
 
-// Derived filtered packet list.
-// Filter string is split on whitespace; a packet passes if *any* term matches
-// (OR logic), enabling multi-term filters like "9001 9000" for profiles.
+// Derived filtered packet list using the Wireshark-style filter parser.
+// An invalid filter expression shows all packets (no filtering applied).
 export const filteredPackets = derived(
   [packets, captureFilter],
   ([$packets, $filter]) => {
-    const terms = $filter.trim().toLowerCase().split(/\s+/).filter(Boolean)
-    if (!terms.length) return $packets
-    return $packets.filter(p =>
-      terms.some(f =>
-        p.protocol?.toLowerCase().includes(f) ||
-        p.src_ip?.includes(f) ||
-        p.dst_ip?.includes(f) ||
-        p.info?.toLowerCase().includes(f) ||
-        String(p.src_port ?? '') === f ||
-        String(p.dst_port ?? '') === f
-      )
-    )
+    const result = parseFilter($filter)
+    if (!result._expr) return $packets
+    return $packets.filter(p => matchesFilter(p, result))
   }
 )

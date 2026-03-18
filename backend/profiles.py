@@ -12,8 +12,8 @@ Fields
   description Subtitle shown below the name (optional, UI hint).
   interface   Network interface to bind (matches an entry from /api/interfaces,
               or "any" for the default outbound interface).
-  filter      Whitespace-separated filter terms.  A packet is shown if *any*
-              term matches its protocol, IP, port, or info string (OR logic).
+  filter      Wireshark-style display filter expression.
+              Uses the same syntax as the frontend filter bar.
               Leave empty to show all traffic on the selected interface.
 
 Adding a profile
@@ -31,13 +31,13 @@ PROFILES: list[dict] = [
         "name":        "UDP Device",
         "description": "Traffic from udp_device — port 9001 (feed mode)",
         "interface":   "any",
-        "filter":      "9001",
+        "filter":      "port == 9001",
     },
     {
         "id":          "my-devices",
         "name":        "My Devices",
         "description": "UDP device (9001) and TCP device (9000)",
         "interface":   "any",
-        "filter":      "9001 9000",
+        "filter":      "port == 9001 || port == 9000",
     },
 ]

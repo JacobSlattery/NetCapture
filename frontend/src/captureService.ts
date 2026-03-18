@@ -13,9 +13,10 @@
 import {
   packets, stats, chartHistory,
   isCapturing, captureMode, connectionStatus, selectedPacket,
-  trackMode, trackFingerprint, trackPrev,
+  trackMode, trackFingerprint, trackPrev, captureFilter,
 } from './stores'
 import type { Packet, ChartPoint, NetworkInterface, CaptureProfile, WsMessage, TrackFingerprint } from './types'
+import { parseFilter, matchesFilter, type ParseResult } from './lib/filter'
 
 const MAX_PACKETS      = 10_000
 const MAX_CHART_POINTS = 50
@@ -29,6 +30,10 @@ let displayTimer:   ReturnType<typeof setInterval> | null = null
 let _displayBuf:   Packet[]     = []   // flushed to packets store at 4 Hz
 let _lastPacketId: number       = 0    // highest received ID — deduplicates buffer replays
 let _trafficHist:  ChartPoint[] = []   // accumulated per-second chart points
+
+// ── Active filter mirror ──────────────────────────────────────────────────────
+let _filterResult: ParseResult = { valid: true }
+captureFilter.subscribe(raw => { _filterResult = parseFilter(raw) })
 
 // ── Track mode mirrors + persistence ─────────────────────────────────────────
 let _trackMode:   boolean             = false
@@ -74,7 +79,9 @@ function matchesFingerprint(pkt: Packet, fp: TrackFingerprint): boolean {
 
 function applyTracking(batch: Packet[]): void {
   if (!_trackMode || !_fingerprint) return
-  const match = [...batch].reverse().find(p => matchesFingerprint(p, _fingerprint!))
+  const match = [...batch].reverse().find(p =>
+    matchesFingerprint(p, _fingerprint!) && matchesFilter(p, _filterResult)
+  )
   if (!match) return
   let cur: Packet | null = null
   const unsub = selectedPacket.subscribe((p: Packet | null) => { cur = p })
