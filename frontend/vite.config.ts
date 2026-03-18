@@ -20,5 +20,6 @@ export default defineConfig({
   build: {
     outDir: '../backend/static',
     emptyOutDir: true,
+    chunkSizeWarningLimit: 600,
   },
 })

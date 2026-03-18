@@ -1,6 +1,7 @@
 import { writable, derived } from 'svelte/store'
 import type {
-  Packet, NetworkInterface, Stats, ChartPoint, CaptureMode, ConnectionStatus,
+  Packet, NetworkInterface, Stats, ChartPoint,
+  CaptureMode, ConnectionStatus, CaptureProfile, TrackFingerprint,
 } from './types'
 
 // All captured packets (capped at MAX_PACKETS in captureService)
@@ -18,11 +19,29 @@ export const captureMode = writable<CaptureMode>('idle')
 // WebSocket / connection state
 export const connectionStatus = writable<ConnectionStatus>('disconnected')
 
-// Selected network interface
-export const selectedInterface = writable<string>('any')
+// Selected network interface — persisted to localStorage.
+// Starts empty so the select shows blank until onMount confirms the right value.
+const _IFACE_KEY = 'nc:selectedInterface'
+export const selectedInterface = writable<string>('')
+selectedInterface.subscribe(v => { if (v) localStorage.setItem(_IFACE_KEY, v) })
 
 // Available network interfaces from backend
 export const interfaces = writable<NetworkInterface[]>([{ name: 'any', description: 'All interfaces' }])
+
+// Named capture profiles from backend (/api/profiles)
+export const profiles = writable<CaptureProfile[]>([])
+
+// Currently active profile (null when a plain interface is selected) — ID persisted
+export const activeProfile = writable<CaptureProfile | null>(null);
+{
+  // Skip the first call (initial writable value) so the saved ID isn't wiped on load
+  let initialized = false
+  activeProfile.subscribe(p => {
+    if (!initialized) { initialized = true; return }
+    if (p) localStorage.setItem('nc:activeProfileId', p.id)
+    else localStorage.removeItem('nc:activeProfileId')
+  })
+}
 
 // BPF-style display filter (client-side)
 export const captureFilter = writable<string>('')
@@ -40,19 +59,28 @@ export const stats = writable<Stats>({
 // full stats subscribers on every tick
 export const chartHistory = writable<ChartPoint[]>([])
 
-// Derived filtered packet list
+// ── Track mode ────────────────────────────────────────────────────────────────
+export const trackMode        = writable<boolean>(false)
+export const trackFingerprint = writable<TrackFingerprint | null>(null)
+export const trackPrev        = writable<Packet | null>(null)
+
+// Derived filtered packet list.
+// Filter string is split on whitespace; a packet passes if *any* term matches
+// (OR logic), enabling multi-term filters like "9001 9000" for profiles.
 export const filteredPackets = derived(
   [packets, captureFilter],
   ([$packets, $filter]) => {
-    const f = $filter.trim().toLowerCase()
-    if (!f) return $packets
+    const terms = $filter.trim().toLowerCase().split(/\s+/).filter(Boolean)
+    if (!terms.length) return $packets
     return $packets.filter(p =>
-      p.protocol?.toLowerCase().includes(f) ||
-      p.src_ip?.includes(f) ||
-      p.dst_ip?.includes(f) ||
-      p.info?.toLowerCase().includes(f) ||
-      String(p.src_port ?? '').includes(f) ||
-      String(p.dst_port ?? '').includes(f)
+      terms.some(f =>
+        p.protocol?.toLowerCase().includes(f) ||
+        p.src_ip?.includes(f) ||
+        p.dst_ip?.includes(f) ||
+        p.info?.toLowerCase().includes(f) ||
+        String(p.src_port ?? '').includes(f) ||
+        String(p.dst_port ?? '').includes(f)
+      )
     )
   }
 )

@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { selectedPacket } from '../stores'
-  import type { Packet } from '../types'
+  import { selectedPacket, trackMode, trackFingerprint, trackPrev } from '../stores'
+  import type { Packet, TrackFingerprint } from '../types'
+  import FieldValue from './FieldValue.svelte'
 
   // ── Layer colour definitions ───────────────────────────────────────────────
   // bg and dot use CSS vars so they track the active theme automatically.
@@ -226,12 +227,53 @@
     return S
   }
 
+  // ── Track mode ─────────────────────────────────────────────────────────────
+  function enterTrack(): void {
+    if (!p) return
+    const fp: TrackFingerprint = {
+      protocol:        p.protocol,
+      src_ip:          p.src_ip,
+      dst_ip:          p.dst_ip,
+      src_port:        p.src_port,
+      dst_port:        p.dst_port,
+      interpreterName: p.decoded?.interpreterName,
+    }
+    trackPrev.set(null)
+    trackFingerprint.set(fp)
+    trackMode.set(true)
+  }
+
+  function exitTrack(): void {
+    trackMode.set(false)
+    trackFingerprint.set(null)
+    trackPrev.set(null)
+  }
+
+  // Diff: keys whose value changed from previous tracked packet
+  $: diffChanged = (() => {
+    if (!$trackMode || !$trackPrev?.decoded || !decoded) return new Set<string>()
+    const prevMap = new Map($trackPrev.decoded.fields.map(f => [f.key, f.value]))
+    return new Set(
+      decoded.fields
+        .filter(f => prevMap.has(f.key) && JSON.stringify(prevMap.get(f.key)) !== JSON.stringify(f.value))
+        .map(f => f.key)
+    )
+  })()
+
+  // New keys: present in current but absent in previous
+  $: diffNew = (() => {
+    if (!$trackMode || !$trackPrev?.decoded || !decoded) return new Set<string>()
+    const prevKeys = new Set($trackPrev.decoded.fields.map(f => f.key))
+    return new Set(decoded.fields.filter(f => !prevKeys.has(f.key)).map(f => f.key))
+  })()
+
   // ── Reactive derivations ───────────────────────────────────────────────────
   $: p             = $selectedPacket
   $: bytes         = toBytes(p?.raw_hex ?? '')
   $: lmap          = layerMap(bytes)
   $: rows          = hexRows(bytes, lmap)
   $: tree          = p ? buildTree(bytes, p) : []
+  $: decoded       = p?.decoded ?? null
   // Only show toggles for layers that actually appear in this packet's bytes
   $: presentLayers = (Object.keys(LAYER) as (keyof typeof LAYER)[]).filter(k => lmap.includes(k))
 
@@ -253,7 +295,7 @@
     return isActive && cell.bg ? `background:${cell.bg}` : ''
   }
 
-  // ── Resize drag ────────────────────────────────────────────────────────────
+  // ── Panel resize drag (vertical — overall detail panel height) ────────────
   let height:   number  = 280
   let dragging: boolean = false
   let startY:   number  = 0
@@ -267,12 +309,29 @@
   }
 
   function dragMove(e: MouseEvent): void {
-    if (!dragging) return
-    // Dragging up (negative delta) → panel grows
-    height = Math.max(120, Math.min(window.innerHeight - 120, startH + (startY - e.clientY)))
+    if (dragging) {
+      height = Math.max(120, Math.min(window.innerHeight - 120, startH + (startY - e.clientY)))
+    }
+    if (decodedDragging) {
+      const dx = e.clientX - decodedDragStartX
+      decodedWidth = Math.max(120, Math.min(600, decodedDragStartW + dx))
+    }
   }
 
-  function dragEnd() { dragging = false }
+  function dragEnd() { dragging = false; decodedDragging = false }
+
+  // ── Decoded panel width drag (horizontal) ──────────────────────────────────
+  let decodedWidth:      number  = 224   // default = w-56
+  let decodedDragging:   boolean = false
+  let decodedDragStartX: number  = 0
+  let decodedDragStartW: number  = 0
+
+  function decodedDragStart(e: MouseEvent): void {
+    decodedDragging   = true
+    decodedDragStartX = e.clientX
+    decodedDragStartW = decodedWidth
+    e.preventDefault()
+  }
 </script>
 
 <svelte:window on:mousemove={dragMove} on:mouseup={dragEnd} />
@@ -297,6 +356,26 @@
     <span class="px-1.5 py-0.5 rounded text-[10px] font-bold text-white"
       style={badge(p.protocol)}>{p.protocol}</span>
     <span class="text-[var(--nc-fg-4)]">{p.abs_time ?? p.timestamp}</span>
+
+    <!-- Track mode controls -->
+    {#if $trackMode}
+      <div class="flex items-center gap-1.5">
+        <div class="w-1.5 h-1.5 rounded-full bg-[var(--nc-status-ok)] animate-pulse"></div>
+        <span class="text-[var(--nc-status-ok)] text-[10px] font-semibold uppercase tracking-wider">Tracking</span>
+        <button
+          class="text-[10px] px-1.5 py-0.5 rounded border border-[var(--nc-border)] text-[var(--nc-fg-3)]
+                 hover:border-[var(--nc-status-err)] hover:text-[var(--nc-status-err)] transition-colors"
+          on:click={exitTrack}
+        >Stop</button>
+      </div>
+    {:else}
+      <button
+        class="text-[10px] px-1.5 py-0.5 rounded border border-[var(--nc-border)] text-[var(--nc-fg-3)]
+               hover:border-[var(--nc-status-ok)] hover:text-[var(--nc-status-ok)] transition-colors"
+        on:click={enterTrack}
+        title="Auto-select new packets matching this type"
+      >Track</button>
+    {/if}
 
     {#if bytes.length > 0}
       <!-- Layer toggle buttons — only for layers present in this packet -->
@@ -325,7 +404,7 @@
 
     <button
       class="ml-auto text-[var(--nc-fg-5)] hover:text-[var(--nc-fg-2)] transition-colors px-1"
-      on:click={() => selectedPacket.set(null)}
+      on:click={() => { exitTrack(); selectedPacket.set(null) }}
     >✕</button>
   </div>
 
@@ -357,8 +436,50 @@
       {/each}
     </div>
 
-    <!-- Hex dump (right panel) -->
-    <div class="flex-1 overflow-auto p-2">
+    <!-- Decoded panel — only shown when an interpreter matches -->
+    {#if decoded}
+      <div class="shrink-0 border-r border-[var(--nc-border)] overflow-y-auto flex flex-col"
+        style="width:{decodedWidth}px">
+        <!-- Header -->
+        <div class="px-2 py-1 bg-[var(--nc-surface)] border-b border-[var(--nc-border)] shrink-0
+                    flex items-center gap-1.5">
+          <span class="text-[var(--nc-fg-5)] text-[10px]">&#9670;</span>
+          <span class="text-[var(--nc-fg-2)] text-[10px] font-semibold uppercase tracking-wider">
+            {decoded.interpreterName}
+          </span>
+        </div>
+
+        {#if decoded.error}
+          <div class="px-2 py-1.5 text-[var(--nc-status-err)] text-[10px] italic">
+            {decoded.error}
+          </div>
+        {:else}
+          <div class="flex-1 overflow-y-auto">
+            {#each decoded.fields as f}
+              {@const changed = diffChanged.has(f.key)}
+              {@const isNew   = diffNew.has(f.key)}
+              <div class="flex items-baseline gap-1 px-2 py-0.5 border-b border-[var(--nc-border-1)] last:border-0"
+                style={changed ? 'background:color-mix(in srgb,var(--nc-status-err) 18%,transparent)'
+                      : isNew   ? 'background:color-mix(in srgb,var(--nc-status-ok)   14%,transparent)'
+                      : ''}>
+                <span class="text-[var(--nc-fg-3)] text-[10px] shrink-0 w-[4.5rem] truncate">{f.key}</span>
+                <FieldValue value={f.value} />
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+
+      <!-- Drag handle between decoded and hex panels -->
+      <button
+        class="w-1 shrink-0 cursor-col-resize hover:bg-blue-500/30 transition-colors bg-[var(--nc-border)] border-none p-0"
+        on:mousedown={decodedDragStart}
+        aria-label="Resize decoded panel"
+      ></button>
+    {/if}
+
+    <!-- Hex dump panel -->
+    <div class="overflow-auto p-2 shrink-0">
       {#if bytes.length > 0}
         <table class="border-separate border-spacing-0 leading-5">
           <tbody>

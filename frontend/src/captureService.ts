@@ -12,9 +12,10 @@
 
 import {
   packets, stats, chartHistory,
-  isCapturing, captureMode, connectionStatus,
+  isCapturing, captureMode, connectionStatus, selectedPacket,
+  trackMode, trackFingerprint, trackPrev,
 } from './stores'
-import type { Packet, ChartPoint, NetworkInterface, WsMessage } from './types'
+import type { Packet, ChartPoint, NetworkInterface, CaptureProfile, WsMessage, TrackFingerprint } from './types'
 
 const MAX_PACKETS      = 10_000
 const MAX_CHART_POINTS = 50
@@ -28,6 +29,73 @@ let displayTimer:   ReturnType<typeof setInterval> | null = null
 let _displayBuf:   Packet[]     = []   // flushed to packets store at 4 Hz
 let _lastPacketId: number       = 0    // highest received ID — deduplicates buffer replays
 let _trafficHist:  ChartPoint[] = []   // accumulated per-second chart points
+
+// ── Track mode mirrors + persistence ─────────────────────────────────────────
+let _trackMode:   boolean             = false
+let _fingerprint: TrackFingerprint | null = null
+
+// Skip the first (initialisation) call so we don't wipe localStorage on load
+;{
+  let first = true
+  trackMode.subscribe(v => {
+    _trackMode = v
+    if (first) { first = false; return }
+    if (v) localStorage.setItem('nc:trackMode', 'true')
+    else   localStorage.removeItem('nc:trackMode')
+  })
+}
+;{
+  let first = true
+  trackFingerprint.subscribe(v => {
+    _fingerprint = v
+    if (first) { first = false; return }
+    if (v) localStorage.setItem('nc:trackFingerprint', JSON.stringify(v))
+    else   localStorage.removeItem('nc:trackFingerprint')
+  })
+}
+// Persist selected packet ID so the detail panel survives a page reload
+;{
+  let first = true
+  selectedPacket.subscribe((p: Packet | null) => {
+    if (first) { first = false; return }
+    if (p) localStorage.setItem('nc:selectedPacketId', String(p.id))
+    else   localStorage.removeItem('nc:selectedPacketId')
+  })
+}
+
+function matchesFingerprint(pkt: Packet, fp: TrackFingerprint): boolean {
+  return pkt.protocol === fp.protocol
+    && pkt.src_ip    === fp.src_ip
+    && pkt.dst_ip    === fp.dst_ip
+    && pkt.src_port  === fp.src_port
+    && pkt.dst_port  === fp.dst_port
+    && (fp.interpreterName == null || pkt.decoded?.interpreterName === fp.interpreterName)
+}
+
+function applyTracking(batch: Packet[]): void {
+  if (!_trackMode || !_fingerprint) return
+  const match = [...batch].reverse().find(p => matchesFingerprint(p, _fingerprint!))
+  if (!match) return
+  let cur: Packet | null = null
+  const unsub = selectedPacket.subscribe((p: Packet | null) => { cur = p })
+  unsub()
+  if (cur === null || (cur as Packet).id !== match.id) {
+    trackPrev.set(cur)
+    selectedPacket.set(match)
+  }
+}
+
+// ── Stats helper ──────────────────────────────────────────────────────────────
+
+function recomputeStats(pkts: Packet[]): void {
+  const protocol_counts: Record<string, number> = {}
+  let total_bytes = 0
+  for (const p of pkts) {
+    total_bytes += p.length ?? 0
+    protocol_counts[p.protocol] = (protocol_counts[p.protocol] ?? 0) + 1
+  }
+  stats.set({ total_packets: pkts.length, total_bytes, packets_per_sec: 0, bytes_per_sec: 0, protocol_counts })
+}
 
 // ── Packet ingestion ──────────────────────────────────────────────────────────
 
@@ -52,6 +120,7 @@ function startDisplayTick(): void {
       const next = list.concat(batch)
       return next.length > MAX_PACKETS ? next.slice(-MAX_PACKETS) : next
     })
+    applyTracking(batch)
   }, 250)
 }
 
@@ -87,9 +156,30 @@ function connect(): void {
         case 'packet':
           ingest([msg.data])
           break
-        case 'batch':
+        case 'batch': {
           ingest(msg.data)
+          // Buffer replay — flush directly without waiting for the display tick
+          // (tick only runs during live capture), then recompute stats.
+          if (_displayBuf.length) {
+            const snap = _displayBuf.splice(0)
+            let merged: Packet[] = []
+            packets.update(list => {
+              merged = list.concat(snap)
+              return merged.length > MAX_PACKETS ? merged.slice(-MAX_PACKETS) : merged
+            })
+            recomputeStats(merged)
+
+            // Restore previously selected packet by ID
+            const savedId = Number(localStorage.getItem('nc:selectedPacketId'))
+            if (savedId) {
+              const hit = merged.find(p => p.id === savedId)
+              if (hit) selectedPacket.set(hit)
+            }
+
+            applyTracking(snap)
+          }
           break
+        }
         case 'stats': {
           stats.set(msg.data)
           const now = new Date()
@@ -100,6 +190,7 @@ function connect(): void {
           })
           if (_trafficHist.length > MAX_CHART_POINTS) _trafficHist.shift()
           chartHistory.set([..._trafficHist])
+          localStorage.setItem('nc:trafficHist', JSON.stringify(_trafficHist))
           break
         }
       }
@@ -147,13 +238,66 @@ export async function stopCapture(): Promise<void> {
 }
 
 export function clearCapture(): void {
+  trackMode.set(false)
+  trackFingerprint.set(null)
+  trackPrev.set(null)
+  selectedPacket.set(null)
+  localStorage.removeItem('nc:trackMode')
+  localStorage.removeItem('nc:trackFingerprint')
+  localStorage.removeItem('nc:selectedPacketId')
   packets.set([])
   _displayBuf   = []
   _lastPacketId = 0
   _trafficHist  = []
+  localStorage.removeItem('nc:trafficHist')
   stats.set({ total_packets: 0, total_bytes: 0, packets_per_sec: 0, bytes_per_sec: 0, protocol_counts: {} })
   chartHistory.set([])
   fetch('/api/reset-session', { method: 'POST' }).catch(() => {})
+}
+
+export function exportCapture(): void {
+  let snap: Packet[] = []
+  const unsub = packets.subscribe(p => { snap = p })
+  unsub()
+  if (!snap.length) return
+
+  const ts   = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')
+  const blob = new Blob([JSON.stringify(snap, null, 2)], { type: 'application/json' })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href     = url
+  a.download = `netcapture-${ts}.json`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+export async function importCapture(file: File): Promise<void> {
+  const text = await file.text()
+  const data = JSON.parse(text)
+  if (!Array.isArray(data)) throw new Error('Expected a JSON array of packets')
+
+  const imported = data as Packet[]
+
+  // Recompute stats from the imported packet list
+  const protocol_counts: Record<string, number> = {}
+  let total_bytes = 0
+  for (const p of imported) {
+    total_bytes += p.length ?? 0
+    protocol_counts[p.protocol] = (protocol_counts[p.protocol] ?? 0) + 1
+  }
+
+  // Reset module state, then load
+  _displayBuf   = []
+  _trafficHist  = []
+  localStorage.removeItem('nc:trafficHist')
+  _lastPacketId = imported.reduce((m, p) => Math.max(m, p.id ?? 0), 0)
+
+  selectedPacket.set(null)
+  chartHistory.set([])
+  stats.set({ total_packets: imported.length, total_bytes, packets_per_sec: 0, bytes_per_sec: 0, protocol_counts })
+  packets.set(imported)
 }
 
 export async function fetchInterfaces(): Promise<NetworkInterface[]> {
@@ -166,6 +310,40 @@ export async function fetchInterfaces(): Promise<NetworkInterface[]> {
     return []
   }
 }
+
+export async function fetchProfiles(): Promise<CaptureProfile[]> {
+  try {
+    const res = await fetch('/api/profiles')
+    if (!res.ok) return []
+    const data = await res.json() as { profiles?: CaptureProfile[] }
+    return data.profiles ?? []
+  } catch {
+    return []
+  }
+}
+
+// Restore persisted chart history so the chart is populated before any new stats arrive
+try {
+  const saved = localStorage.getItem('nc:trafficHist')
+  if (saved) {
+    _trafficHist = JSON.parse(saved) as ChartPoint[]
+    chartHistory.set([..._trafficHist])
+  }
+} catch { /* ignore corrupt data */ }
+
+// Restore track mode — sets mirror vars and stores so applyTracking works immediately
+try {
+  if (localStorage.getItem('nc:trackMode') === 'true') {
+    const raw = localStorage.getItem('nc:trackFingerprint')
+    if (raw) {
+      const fp = JSON.parse(raw) as TrackFingerprint
+      _fingerprint = fp
+      trackFingerprint.set(fp)
+      _trackMode = true
+      trackMode.set(true)
+    }
+  }
+} catch { /* ignore corrupt data */ }
 
 // Connect as soon as the module is first imported
 connect()

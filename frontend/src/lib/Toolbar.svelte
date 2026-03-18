@@ -2,10 +2,50 @@
   import { createEventDispatcher } from 'svelte'
   import {
     isCapturing, connectionStatus, selectedInterface,
-    interfaces, captureFilter, captureMode,
+    interfaces, captureFilter, captureMode, profiles, activeProfile,
   } from '../stores'
+  import type { CaptureProfile } from '../types'
+  import { exportCapture, importCapture } from '../captureService'
+
+  let fileInput: HTMLInputElement
+
+  async function handleImport(e: Event): Promise<void> {
+    const file = (e.target as HTMLInputElement).files?.[0]
+    if (!file) return
+    try {
+      await importCapture(file)
+    } catch (err) {
+      console.error('[import]', err)
+    } finally {
+      // Reset input so the same file can be re-imported
+      fileInput.value = ''
+    }
+  }
 
   const dispatch = createEventDispatcher()
+
+  // ── Profile / interface selection ──────────────────────────────────────────
+  // The dropdown encodes its value as "iface:<name>" or "profile:<id>" so
+  // both interfaces and profiles can share a single <select> binding.
+
+  $: selectionKey = $activeProfile
+    ? `profile:${$activeProfile.id}`
+    : `iface:${$selectedInterface}`
+
+  function handleSelectionChange(e: Event): void {
+    const val = (e.target as HTMLSelectElement).value
+    if (val.startsWith('profile:')) {
+      const id   = val.slice('profile:'.length)
+      const prof = $profiles.find((p: CaptureProfile) => p.id === id) ?? null
+      activeProfile.set(prof)
+      if (prof) {
+        selectedInterface.set(prof.interface)
+      }
+    } else {
+      activeProfile.set(null)
+      selectedInterface.set(val.slice('iface:'.length))
+    }
+  }
 
   $: statusDotStyle = ({
     connected:    'background-color: var(--nc-status-ok)',
@@ -33,18 +73,31 @@
     <span class="text-[var(--nc-fg)] font-bold text-base tracking-tight">NetCapture</span>
   </div>
 
-  <!-- Interface selector -->
+  <!-- Interface / profile selector -->
   <select
-    bind:value={$selectedInterface}
+    value={selectionKey}
+    on:change={handleSelectionChange}
     disabled={$isCapturing}
     class="bg-[var(--nc-surface)] text-[var(--nc-fg-1)] border border-[var(--nc-border)] rounded px-2 py-1 text-xs
-           focus:outline-none focus:border-blue-500 disabled:opacity-40 cursor-pointer"
+           w-72 focus:outline-none focus:border-blue-500 disabled:opacity-40 cursor-pointer"
   >
-    {#each $interfaces as iface}
-      <option value={iface.name}>
-        {iface.name}{iface.description ? ` — ${iface.description}` : ''}
-      </option>
-    {/each}
+    <optgroup label="Interfaces">
+      {#each $interfaces as iface}
+        <option value="iface:{iface.name}">
+          {iface.description ?? iface.name}
+        </option>
+      {/each}
+    </optgroup>
+
+    {#if $profiles.length}
+      <optgroup label="Capture Profiles">
+        {#each $profiles as prof}
+          <option value="profile:{prof.id}" title={prof.description}>
+            {prof.name}
+          </option>
+        {/each}
+      </optgroup>
+    {/if}
   </select>
 
   <!-- Start / Stop -->
@@ -85,6 +138,41 @@
       <path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clip-rule="evenodd"/>
     </svg>
     Clear
+  </button>
+
+  <!-- Export -->
+  <button
+    on:click={exportCapture}
+    disabled={$isCapturing}
+    class="flex items-center gap-1.5 bg-[var(--nc-surface-2)] hover:bg-[var(--nc-border)] text-[var(--nc-fg-1)]
+           px-3 py-1 rounded text-xs border border-[var(--nc-border)] transition-colors disabled:opacity-40"
+  >
+    <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+      <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/>
+      <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
+    </svg>
+    Export
+  </button>
+
+  <!-- Import -->
+  <input
+    bind:this={fileInput}
+    type="file"
+    accept=".json"
+    class="hidden"
+    on:change={handleImport}
+  />
+  <button
+    on:click={() => fileInput.click()}
+    disabled={$isCapturing}
+    class="flex items-center gap-1.5 bg-[var(--nc-surface-2)] hover:bg-[var(--nc-border)] text-[var(--nc-fg-1)]
+           px-3 py-1 rounded text-xs border border-[var(--nc-border)] transition-colors disabled:opacity-40"
+  >
+    <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+      <path d="M9.25 13.25a.75.75 0 001.5 0V4.636l2.955 3.129a.75.75 0 001.09-1.03l-4.25-4.5a.75.75 0 00-1.09 0l-4.25 4.5a.75.75 0 101.09 1.03L9.25 4.636v8.614z"/>
+      <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
+    </svg>
+    Import
   </button>
 
   <!-- Capture mode badge -->

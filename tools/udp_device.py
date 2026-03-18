@@ -33,6 +33,8 @@ Run from the repo root:
 from __future__ import annotations
 
 import argparse
+import json
+import math
 import socket
 import struct
 import threading
@@ -57,6 +59,51 @@ def _make_payload(idx: int) -> bytes:
         return template % (idx, t)
     except TypeError:
         return template  # template has no format slots
+
+
+# ── NC-Frame binary format ────────────────────────────────────────────────────
+#
+# Magic: 0x4E 0x43 ("NC")  Version: 0x01
+# Fields: [key_len][key][tag][value…]
+# Tags: 0x01=u8, 0x02=u16, 0x03=u32, 0x04=f32, 0x05=str(1+N), 0x06=bool
+#
+# This format is understood by the frontend NC-Frame interpreter.
+
+_NC_STATUSES = [b"idle", b"running", b"warning", b"ok"]
+
+
+def _nc_field(key: str, tag: int, value: bytes) -> bytes:
+    k = key.encode()
+    return bytes([len(k)]) + k + bytes([tag]) + value
+
+
+def _nc_json_field(key: str, obj: object) -> bytes:
+    """Encode a Python list or dict as a JSON-tagged NC-Frame field (tag 0x07)."""
+    payload = json.dumps(obj).encode()
+    return _nc_field(key, 0x07, struct.pack("!H", len(payload)) + payload)
+
+
+def _make_nc_frame(seq: int) -> bytes:
+    ts_ms   = int(time.time() * 1000) & 0xFFFFFFFF
+    temp    = 20.0 + 5.0 * math.sin(seq * 0.3)   # oscillating temperature
+    status  = _NC_STATUSES[seq % len(_NC_STATUSES)]
+    rssi    = 80 + (seq % 40)                     # simulated signal strength
+    # Array field: last 3 temperature readings (simulated)
+    history = [round(20.0 + 5.0 * math.sin((seq - i) * 0.3), 2) for i in range(3)]
+    # Dict field: device metadata
+    meta    = {"fw": "1.2.3", "sensor": "BME280", "channel": seq % 4}
+
+    fields = [
+        _nc_field("seq",     0x03, struct.pack("!I", seq & 0xFFFFFFFF)),
+        _nc_field("ts_ms",   0x03, struct.pack("!I", ts_ms)),
+        _nc_field("temp",    0x04, struct.pack("!f", temp)),
+        _nc_field("status",  0x05, bytes([len(status)]) + status),
+        _nc_field("active",  0x06, bytes([0 if seq % 5 == 0 else 1])),
+        _nc_field("rssi",    0x02, struct.pack("!H", rssi)),
+        _nc_json_field("history", history),
+        _nc_json_field("meta",    meta),
+    ]
+    return bytes([0x4E, 0x43, 0x01, len(fields)]) + b"".join(fields)
 
 
 # ── IP helpers ────────────────────────────────────────────────────────────────
@@ -171,7 +218,13 @@ def run_chat(local_ip: str, port: int, interval: float) -> None:
 
 # ── Feed mode (sends to backend UDP sink — no admin, works on loopback) ───────
 
-def run_feed(backend_host: str, sink_port: int, interval: float, count: int | None) -> None:
+def run_feed(
+    backend_host: str,
+    sink_port: int,
+    interval: float,
+    count: int | None,
+    fmt: str = "random",
+) -> None:
     """
     Sends a stream of UDP datagrams directly to the NetCapture backend's UDP
     sink port (default 9001).  The backend receives them as normal application
@@ -179,17 +232,26 @@ def run_feed(backend_host: str, sink_port: int, interval: float, count: int | No
     privileges required.
 
     Because we're sending to the backend process, loopback (127.0.0.1) is fine.
+
+    fmt:
+      "random"    — cycles through the built-in text/binary templates
+      "nc-frame"  — sends NC-Frame binary packets (decodable by the frontend
+                    NC-Frame interpreter in the packet detail panel)
     """
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         target = (backend_host, sink_port)
-        print(f"[feed] → {backend_host}:{sink_port}  interval={interval:.3f}s")
-        print("Open the NetCapture display, disable Mock data, then click Start.\n")
+        print(f"[feed] → {backend_host}:{sink_port}  interval={interval:.3f}s  format={fmt}")
+        if fmt == "nc-frame":
+            print("NC-Frame mode: select a packet in NetCapture to see decoded fields.\n")
+        else:
+            print("Open the NetCapture display and click Start.\n")
         seq = 0
         try:
             while count is None or seq < count:
-                payload = _make_payload(seq)
+                payload = _make_nc_frame(seq) if fmt == "nc-frame" else _make_payload(seq)
                 sock.sendto(payload, target)
-                print(f"  → seq={seq:>5}  {len(payload):>4} B  {payload[:60]}")
+                preview = payload.hex()[:40] if fmt == "nc-frame" else payload[:60]
+                print(f"  → seq={seq:>5}  {len(payload):>4} B  {preview}")
                 seq += 1
                 time.sleep(interval)
         except KeyboardInterrupt:
@@ -245,6 +307,15 @@ def main() -> None:
         "--count", type=int, default=None,
         help="Number of packets to send, then stop (default: unlimited)",
     )
+    parser.add_argument(
+        "--format", choices=["random", "nc-frame"], default="random",
+        dest="fmt",
+        help=(
+            "Payload format for feed/sender modes (default: random)\n"
+            "  random    — cycles through built-in text/binary templates\n"
+            "  nc-frame  — NC-Frame binary (decoded by the NetCapture detail panel)"
+        ),
+    )
     args = parser.parse_args()
 
     interval = 1.0 / max(args.rate, 0.01)
@@ -252,7 +323,7 @@ def main() -> None:
     print(f"Local interface IP detected as: {local_ip}")
 
     if args.mode == "feed":
-        run_feed(args.backend, args.backend_port, interval, args.count)
+        run_feed(args.backend, args.backend_port, interval, args.count, args.fmt)
     elif args.mode == "sender":
         if local_ip.startswith("127."):
             print("WARNING: loopback IP — SIO_RCVALL will NOT see this traffic (use --mode feed instead).")

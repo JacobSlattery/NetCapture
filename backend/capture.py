@@ -102,17 +102,19 @@ def parse_packet(raw: bytes, start_time: float, seq: int) -> dict | None:
     transport    = _IP_PROTO.get(proto_num, f"IP/{proto_num}")
     payload      = raw[ihl:]
 
-    src_port: int | None = None
-    dst_port: int | None = None
-    flags: str | None    = None
-    info                 = f"{src_ip} → {dst_ip}"
+    src_port: int | None    = None
+    dst_port: int | None    = None
+    flags: str | None       = None
+    app_payload: bytes | None = None
+    info                    = f"{src_ip} → {dst_ip}"
 
     if proto_num == 6 and len(payload) >= 20:          # TCP
         src_port, dst_port = struct.unpack_from("!HH", payload)
         data_off = (payload[12] >> 4) * 4
         flags    = _tcp_flags(payload[13])
         seq_num  = struct.unpack_from("!I", payload, 4)[0]
-        app_len  = max(0, len(payload) - data_off)
+        app_payload = payload[data_off:]
+        app_len  = len(app_payload)
         transport = _label("TCP", src_port, dst_port)
         info = (
             f"[{flags}] {src_ip}:{src_port} → {dst_ip}:{dst_port}  "
@@ -122,6 +124,7 @@ def parse_packet(raw: bytes, start_time: float, seq: int) -> dict | None:
     elif proto_num == 17 and len(payload) >= 8:        # UDP
         src_port, dst_port = struct.unpack_from("!HH", payload)
         udp_len = struct.unpack_from("!H", payload, 4)[0]
+        app_payload = payload[8:]
         transport = _label("UDP", src_port, dst_port)
         info = (
             f"{src_ip}:{src_port} → {dst_ip}:{dst_port}  "
@@ -159,6 +162,8 @@ def parse_packet(raw: bytes, start_time: float, seq: int) -> dict | None:
         "flags":     flags,
         "info":      info,
         "raw_hex":   raw_hex,
+        # Internal — consumed by _emit_packet, never serialised to the frontend.
+        "_payload":  app_payload,
     }
 
 
@@ -251,6 +256,8 @@ class RawCapture:
     def _capture_loop(self) -> None:
         while not self._stop.is_set():
             try:
+                if self._sock is None:
+                    break
                 raw = self._sock.recv(self._buf_size)
                 if not self._queue.full():
                     self._queue.put_nowait(raw)

@@ -1,12 +1,18 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
-  import * as echarts from 'echarts'
+  import * as echarts from 'echarts/core'
+  import { PieChart, BarChart, LineChart } from 'echarts/charts'
+  import { TooltipComponent, LegendComponent, GridComponent } from 'echarts/components'
+  import { CanvasRenderer, SVGRenderer } from 'echarts/renderers'
+  import type { ECharts } from 'echarts/core'
   import { stats, chartHistory } from '../stores'
+
+  echarts.use([PieChart, BarChart, LineChart, TooltipComponent, LegendComponent, GridComponent, CanvasRenderer, SVGRenderer])
 
   let pieEl:   HTMLDivElement
   let lineEl:  HTMLDivElement
-  let pieChart:  echarts.ECharts | undefined
-  let lineChart: echarts.ECharts | undefined
+  let pieChart:  ECharts | undefined
+  let lineChart: ECharts | undefined
   let mo:  MutationObserver | undefined
 
   // Protocol and chart colours are read from CSS vars at init time so they
@@ -115,16 +121,12 @@
       yAxis: [
         {
           type: 'value',
-          name: 'Pkts/s',
-          nameTextStyle: { color: t.fg3, fontSize: 10 },
           axisLine: { lineStyle: { color: t.border } },
           axisLabel: { color: t.fg3, fontSize: 10 },
           splitLine: { lineStyle: { color: t.border1 } },
         },
         {
           type: 'value',
-          name: 'KB/s',
-          nameTextStyle: { color: t.fg3, fontSize: 10 },
           axisLine: { lineStyle: { color: t.border } },
           axisLabel: { color: t.fg3, fontSize: 10 },
           splitLine: { show: false },
@@ -142,6 +144,7 @@
           name: 'KB/s',
           type: 'line',
           yAxisIndex: 1,
+          color: t.pUdp,
           data: [],
           smooth: true,
           symbol: 'none',

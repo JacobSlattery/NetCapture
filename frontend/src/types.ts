@@ -1,3 +1,45 @@
+// ── Interpreter / translation layer ──────────────────────────────────────────
+
+export type DecodedValue =
+  | string | number | boolean
+  | DecodedValue[]
+  | { [k: string]: DecodedValue }
+
+export interface DecodedField {
+  key:   string
+  value: DecodedValue
+  type:  string   // 'u8' | 'u16' | 'u32' | 'f32' | 'str' | 'bool' | 'list' | 'dict'
+}
+
+export interface DecodedFrame {
+  interpreterName: string
+  fields: DecodedField[]
+  error?: string
+}
+
+// ── Track mode fingerprint ────────────────────────────────────────────────────
+
+export interface TrackFingerprint {
+  protocol:        string
+  src_ip:          string
+  dst_ip:          string
+  src_port:        number | null
+  dst_port:        number | null
+  interpreterName: string | undefined
+}
+
+// ── Capture profile ───────────────────────────────────────────────────────────
+
+export interface CaptureProfile {
+  id:          string
+  name:        string
+  description: string
+  interface:   string   // network interface to bind when this profile is active
+  filter:      string   // whitespace-separated OR filter terms
+}
+
+// ── Packet ────────────────────────────────────────────────────────────────────
+
 export interface Packet {
   id: number
   timestamp: string
@@ -10,6 +52,7 @@ export interface Packet {
   length: number
   info: string
   raw_hex?: string
+  decoded?: DecodedFrame   // set by backend when an interpreter matches
 }
 
 export interface NetworkInterface {
