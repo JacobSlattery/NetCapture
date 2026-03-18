@@ -45,7 +45,7 @@ except ImportError:
 
 # ── Helpers shared with capture.py ────────────────────────────────────────────
 
-from capture import _PORT_LABEL, _label, _tcp_flags  # noqa: E402
+from .capture import _PORT_LABEL, _label, _tcp_flags
 
 
 # ── Npcap probe ───────────────────────────────────────────────────────────────

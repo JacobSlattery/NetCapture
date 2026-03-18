@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { interfaces, selectedInterface, captureFilter, profiles, activeProfile } from './stores'
-  import { initCaptureService, startCapture, stopCapture, clearCapture, fetchInterfaces, fetchProfiles } from './captureService'
+  import { interfaces, selectedInterface, captureFilter, profiles, activeProfile, addressBook } from './stores'
+  import { initCaptureService, startCapture, stopCapture, clearCapture, fetchInterfaces, fetchProfiles, fetchAddressBook } from './captureService'
   import Toolbar      from './components/Toolbar.svelte'
   import StatsBar     from './components/StatsBar.svelte'
   import PacketTable  from './components/PacketTable.svelte'
@@ -45,9 +45,10 @@
     const savedIfaceName = localStorage.getItem('nc:selectedInterface') ?? ''
     const savedProfileId = localStorage.getItem('nc:activeProfileId')
 
-    const [ifaces, profs] = await Promise.all([fetchInterfaces(), fetchProfiles()])
+    const [ifaces, profs, book] = await Promise.all([fetchInterfaces(), fetchProfiles(), fetchAddressBook()])
     if (ifaces.length) interfaces.set(ifaces)
     profiles.set(profs)
+    addressBook.set(book)
 
     const savedProf = savedProfileId ? (profs.find(p => p.id === savedProfileId) ?? null) : null
     if (savedProf) {

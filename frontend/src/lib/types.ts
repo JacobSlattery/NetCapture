@@ -28,6 +28,15 @@ export interface TrackFingerprint {
   interpreterName: string | undefined
 }
 
+// ── Address book ──────────────────────────────────────────────────────────────
+
+export interface AddressBookEntry {
+  id:      string
+  address: string   // "ip" (e.g. "192.168.1.1") or "ip:port" (e.g. "192.168.1.1:9001")
+  name:    string
+  notes?:  string
+}
+
 // ── Capture profile ───────────────────────────────────────────────────────────
 
 export interface CaptureProfile {

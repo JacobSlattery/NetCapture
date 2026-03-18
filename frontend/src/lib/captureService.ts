@@ -13,13 +13,23 @@
 import {
   packets, stats, chartHistory,
   isCapturing, captureMode, connectionStatus, selectedPacket,
-  trackMode, trackFingerprint, trackPrev, captureFilter,
+  trackMode, trackFingerprint, trackPrev, captureFilter, addressBook, trackLastUpdate,
+  maxPackets, capturePacketLimit, ringBuffer,
 } from './stores'
-import type { Packet, ChartPoint, NetworkInterface, CaptureProfile, WsMessage, TrackFingerprint } from './types'
-import { parseFilter, matchesFilter, type ParseResult } from './filter'
+import type { Packet, ChartPoint, NetworkInterface, CaptureProfile, WsMessage, TrackFingerprint, AddressBookEntry } from './types'
+import { parseFilter, matchesFilter, setAddressBook, type ParseResult } from './filter'
 
-const MAX_PACKETS      = 10_000
+// Keep filter's address book mirror in sync with the store
+addressBook.subscribe(book => setAddressBook(book))
+
 const MAX_CHART_POINTS = 50
+
+let _maxPackets          = 10_000
+let _capturePacketLimit  = 0
+let _ringBuffer          = true
+maxPackets.subscribe(v => { _maxPackets = v })
+capturePacketLimit.subscribe(v => { _capturePacketLimit = v })
+ringBuffer.subscribe(v => { _ringBuffer = v })
 
 // ── Module-level state ────────────────────────────────────────────────────────
 
@@ -98,6 +108,7 @@ function applyTracking(batch: Packet[]): void {
   if (cur === null || (cur as Packet).id !== match.id) {
     trackPrev.set(cur)
     selectedPacket.set(match)
+    trackLastUpdate.set(Date.now())
   }
 }
 
@@ -131,11 +142,20 @@ function startDisplayTick(): void {
   displayTimer = setInterval(() => {
     if (!_displayBuf.length) return
     const batch = _displayBuf.splice(0)
+    let newTotal = 0
     packets.update(list => {
       const next = list.concat(batch)
-      return next.length > MAX_PACKETS ? next.slice(-MAX_PACKETS) : next
+      const result = (_ringBuffer && next.length > _maxPackets) ? next.slice(-_maxPackets) : next
+      newTotal = result.length
+      return result
     })
     applyTracking(batch)
+    if (_capturePacketLimit > 0 && newTotal >= _capturePacketLimit) {
+      isCapturing.set(false)
+      captureMode.set('idle')
+      stopDisplayTick()
+      fetch(`${_apiBase}/api/capture/stop`, { method: 'POST' }).catch(() => {})
+    }
   }, 250)
 }
 
@@ -177,7 +197,7 @@ function connect(): void {
             let merged: Packet[] = []
             packets.update(list => {
               merged = list.concat(snap)
-              return merged.length > MAX_PACKETS ? merged.slice(-MAX_PACKETS) : merged
+              return (_ringBuffer && merged.length > _maxPackets) ? merged.slice(-_maxPackets) : merged
             })
             recomputeStats(merged)
 
@@ -344,6 +364,27 @@ export async function fetchProfiles(): Promise<CaptureProfile[]> {
   } catch {
     return []
   }
+}
+
+export async function fetchAddressBook(): Promise<AddressBookEntry[]> {
+  try {
+    const res = await fetch(`${_apiBase}/api/address-book`)
+    if (!res.ok) return []
+    const data = await res.json() as { entries?: AddressBookEntry[] }
+    return data.entries ?? []
+  } catch {
+    return []
+  }
+}
+
+export async function saveAddressBook(entries: AddressBookEntry[]): Promise<void> {
+  try {
+    await fetch(`${_apiBase}/api/address-book`, {
+      method:  'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ entries }),
+    })
+  } catch { /* ignore */ }
 }
 
 // ── Restore persisted state at module load ────────────────────────────────────

@@ -1,7 +1,44 @@
 <script lang="ts">
-  import { selectedPacket, trackMode, trackFingerprint, trackPrev } from '../stores'
+  import { onDestroy, onMount } from 'svelte'
+  import { selectedPacket, trackMode, trackFingerprint, trackPrev, isCapturing, connectionStatus, trackLastUpdate } from '../stores'
   import type { Packet, TrackFingerprint } from '../types'
   import FieldValue from './FieldValue.svelte'
+
+  // ── Track state ────────────────────────────────────────────────────────────
+  // Tick every second so the "waiting" threshold updates in real-time
+  const WAITING_THRESHOLD_MS = 5_000
+
+  let _now = Date.now()
+  const _ticker = setInterval(() => { _now = Date.now() }, 1_000)
+  onDestroy(() => clearInterval(_ticker))
+
+  type TrackState = 'off' | 'active' | 'waiting' | 'offline'
+
+  $: trackState = ((): TrackState => {
+    if (!$trackMode) return 'off'
+    if (!$isCapturing || $connectionStatus === 'disconnected' || $connectionStatus === 'error') return 'offline'
+    if ($trackLastUpdate === null || _now - $trackLastUpdate > WAITING_THRESHOLD_MS) return 'waiting'
+    return 'active'
+  })()
+
+  const TRACK_DOT: Record<TrackState, string> = {
+    off:     '',
+    active:  'bg-[var(--nc-status-ok)] animate-pulse',
+    waiting: 'bg-amber-400 animate-pulse',
+    offline: 'bg-[var(--nc-status-err)]',
+  }
+  const TRACK_TEXT: Record<TrackState, string> = {
+    off:     '',
+    active:  'Tracking',
+    waiting: 'Tracking — no signal',
+    offline: 'Tracking — offline',
+  }
+  const TRACK_COLOR: Record<TrackState, string> = {
+    off:     '',
+    active:  'var(--nc-status-ok)',
+    waiting: 'rgb(251 191 36)',   // amber-400
+    offline: 'var(--nc-status-err)',
+  }
 
   // ── Layer colour definitions ───────────────────────────────────────────────
   // bg and dot use CSS vars so they track the active theme automatically.
@@ -384,18 +421,19 @@
 
     <!-- Track mode controls -->
     {#if $trackMode}
-      <div class="flex items-center gap-1.5">
-        <div class="w-1.5 h-1.5 rounded-full bg-[var(--nc-status-ok)] animate-pulse"></div>
-        <span class="text-[var(--nc-status-ok)] text-[10px] font-semibold uppercase tracking-wider">Tracking</span>
+      <div class="flex items-center gap-1.5 ml-1">
         <button
           class="text-[10px] px-1.5 py-0.5 rounded border border-[var(--nc-border)] text-[var(--nc-fg-3)]
                  hover:border-[var(--nc-status-err)] hover:text-[var(--nc-status-err)] transition-colors"
           on:click={exitTrack}
         >Stop</button>
+        <div class="w-1.5 h-1.5 rounded-full {TRACK_DOT[trackState]}"></div>
+        <span class="text-[10px] font-semibold uppercase tracking-wider"
+          style="color:{TRACK_COLOR[trackState]}">{TRACK_TEXT[trackState]}</span>
       </div>
     {:else}
       <button
-        class="text-[10px] px-1.5 py-0.5 rounded border border-[var(--nc-border)] text-[var(--nc-fg-3)]
+        class="text-[10px] px-1.5 py-0.5 ml-1 rounded border border-[var(--nc-border)] text-[var(--nc-fg-3)]
                hover:border-[var(--nc-status-ok)] hover:text-[var(--nc-status-ok)] transition-colors"
         on:click={enterTrack}
         title="Auto-select new packets matching this type"

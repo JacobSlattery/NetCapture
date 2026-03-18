@@ -1,21 +1,104 @@
 <script lang="ts">
   import { afterUpdate, tick } from 'svelte'
-  import { filteredPackets, selectedPacket, isCapturing, trackMode, trackFingerprint, trackPrev } from '../stores'
-  import type { Packet } from '../types'
+  import {
+    filteredPackets, selectedPacket, isCapturing, trackMode, trackFingerprint, trackPrev,
+    captureFilter, addressBook, addressBookPrefill, timestampMode,
+    autoScrollEnabled, columnVisibility,
+  } from '../stores'
+  import type { Packet, AddressBookEntry } from '../types'
+  import type { ColumnVisibility } from '../stores'
+  import ContextMenu from './ContextMenu.svelte'
+
+  function copyText(text: string): void {
+    navigator.clipboard.writeText(text).catch(() => {})
+  }
+
+  function copyFrame(pkt: Packet): void {
+    copyText(JSON.stringify(pkt, null, 2))
+  }
+
+  // ── Column resize ──────────────────────────────────────────────────────────
+
+  type ColKey = keyof ColumnVisibility
+
+  const COL_KEYS: ColKey[] = ['no', 'time', 'source', 'destination', 'proto', 'length', 'info']
+
+  function defaultWidths(): Record<ColKey, number> {
+    return { no: 52, time: 90, source: 172, destination: 172, proto: 72, length: 58, info: 200 }
+  }
+
+  let colWidths: Record<ColKey, number> = (() => {
+    try { return { ...defaultWidths(), ...JSON.parse(localStorage.getItem('nc:colWidths') ?? 'null') } }
+    catch { return defaultWidths() }
+  })()
+
+  $: COLS = (() => {
+    const vis  = $columnVisibility
+    const keys = COL_KEYS.filter(k => vis[k])
+    return keys.map((k, i) => {
+      const isLast = i === keys.length - 1
+      if (k === 'info' || isLast) return '1fr'
+      return `${colWidths[k]}px`
+    }).join(' ')
+  })()
+
+  function startResize(e: MouseEvent, key: ColKey): void {
+    if (key === 'info') return
+    e.preventDefault()
+    e.stopPropagation()
+    const startX = e.clientX
+    const startW = colWidths[key]
+    document.body.style.cursor     = 'col-resize'
+    document.body.style.userSelect = 'none'
+    function onMove(me: MouseEvent) {
+      colWidths = { ...colWidths, [key]: Math.max(40, startW + me.clientX - startX) }
+    }
+    function onUp() {
+      document.body.style.cursor     = ''
+      document.body.style.userSelect = ''
+      localStorage.setItem('nc:colWidths', JSON.stringify(colWidths))
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
 
   // ── Virtual scroll constants ───────────────────────────────────────────────
-  // ROW_H must match the actual rendered row height:
-  //   py-1.5 (6px×2) + text-xs line-height (16px) + border-b (1px) = 29 px
   const ROW_H  = 29
-  const RENDER = 250   // rows in the virtual window
-  const BUFFER = 40    // extra rows rendered above/below the visible area
+  const RENDER = 250
+  const BUFFER = 40
 
   // ── State ──────────────────────────────────────────────────────────────────
   let bodyEl:    HTMLDivElement
-  let autoScroll = true
+  let nearBottom = true
   let scrollTop  = 0
   let padTop     = 0
   let padBottom  = 0
+
+  $: liveFollow = $autoScrollEnabled && nearBottom
+
+  // ── Address resolution ─────────────────────────────────────────────────────
+
+  function resolveName(ip: string, port: number | null, book: AddressBookEntry[]): string {
+    if (port != null) {
+      const key = `${ip}:${port}`.toLowerCase()
+      const hit = book.find(e => e.address.toLowerCase() === key)
+      if (hit) return hit.name
+    }
+    const hit = book.find(e => e.address.toLowerCase() === ip?.toLowerCase())
+    return hit?.name ?? ip
+  }
+
+  function displayAddr(ip: string, port: number | null, book: AddressBookEntry[]): string {
+    const name = resolveName(ip, port, book)
+    if (name !== ip) return name
+    return port != null ? `${ip}:${port}` : ip
+  }
+
+  function hasName(ip: string, port: number | null, book: AddressBookEntry[]): boolean {
+    return resolveName(ip, port, book) !== ip
+  }
 
   // ── Protocol colour tables ─────────────────────────────────────────────────
   const ROW_TINT: Record<string, string> = {
@@ -39,58 +122,143 @@
     return `background-color: var(${BADGE_VAR[proto] ?? '--nc-p-default'})`
   }
 
+  // ── Filter append helper ───────────────────────────────────────────────────
+
+  function appendFilter(clause: string): void {
+    captureFilter.update(cur => {
+      const t = cur.trim()
+      return t ? `(${t}) and ${clause}` : clause
+    })
+  }
+
+  // ── Context menu ───────────────────────────────────────────────────────────
+
+  type MenuItem = { label: string; sub?: string; action: () => void } | { separator: true }
+
+  let ctxMenu: { x: number; y: number; items: MenuItem[] } | null = null
+
+  function openSrcMenu(e: MouseEvent, pkt: Packet): void {
+    e.preventDefault()
+    const ip      = pkt.src_ip
+    const port    = pkt.src_port
+    const name    = resolveName(ip, port, $addressBook)
+    const isNamed = name !== ip
+    const display = displayAddr(ip, port, $addressBook)
+
+    const items: MenuItem[] = [
+      { label: 'Filter for source',  sub: `ip.src == ${ip}`, action: () => appendFilter(`ip.src == ${ip}`) },
+      { label: 'Exclude source',     sub: `not ip.src == ${ip}`, action: () => appendFilter(`not ip.src == ${ip}`) },
+    ]
+    if (isNamed) {
+      items.push({ separator: true })
+      items.push({ label: 'Filter by name',  sub: `src_name == "${name}"`, action: () => appendFilter(`src_name == "${name}"`) })
+      items.push({ label: 'Exclude by name', sub: `not src_name == "${name}"`, action: () => appendFilter(`not src_name == "${name}"`) })
+    }
+    if (port != null) {
+      items.push({ separator: true })
+      items.push({ label: 'Filter source port', sub: `src.port == ${port}`, action: () => appendFilter(`src.port == ${port}`) })
+    }
+    items.push({ separator: true })
+    items.push({ label: 'Copy value', sub: display,  action: () => copyText(display) })
+    items.push({ label: 'Copy frame', sub: 'JSON',   action: () => copyFrame(pkt) })
+    if (!isNamed) {
+      items.push({ separator: true })
+      items.push({ label: 'Add IP to address book',         sub: ip,              action: () => addressBookPrefill.set(ip) })
+      if (port != null) {
+        items.push({ label: `Add IP:Port to address book`,  sub: `${ip}:${port}`, action: () => addressBookPrefill.set(`${ip}:${port}`) })
+      }
+    }
+    ctxMenu = { x: e.clientX, y: e.clientY, items }
+  }
+
+  function openDstMenu(e: MouseEvent, pkt: Packet): void {
+    e.preventDefault()
+    const ip      = pkt.dst_ip
+    const port    = pkt.dst_port
+    const name    = resolveName(ip, port, $addressBook)
+    const isNamed = name !== ip
+    const display = displayAddr(ip, port, $addressBook)
+
+    const items: MenuItem[] = [
+      { label: 'Filter for destination', sub: `ip.dst == ${ip}`, action: () => appendFilter(`ip.dst == ${ip}`) },
+      { label: 'Exclude destination',    sub: `not ip.dst == ${ip}`, action: () => appendFilter(`not ip.dst == ${ip}`) },
+    ]
+    if (isNamed) {
+      items.push({ separator: true })
+      items.push({ label: 'Filter by name',  sub: `dst_name == "${name}"`, action: () => appendFilter(`dst_name == "${name}"`) })
+      items.push({ label: 'Exclude by name', sub: `not dst_name == "${name}"`, action: () => appendFilter(`not dst_name == "${name}"`) })
+    }
+    if (port != null) {
+      items.push({ separator: true })
+      items.push({ label: 'Filter dest port', sub: `dst.port == ${port}`, action: () => appendFilter(`dst.port == ${port}`) })
+    }
+    items.push({ separator: true })
+    items.push({ label: 'Copy value', sub: display, action: () => copyText(display) })
+    items.push({ label: 'Copy frame', sub: 'JSON',  action: () => copyFrame(pkt) })
+    if (!isNamed) {
+      items.push({ separator: true })
+      items.push({ label: 'Add IP to address book',        sub: ip,              action: () => addressBookPrefill.set(ip) })
+      if (port != null) {
+        items.push({ label: `Add IP:Port to address book`, sub: `${ip}:${port}`, action: () => addressBookPrefill.set(`${ip}:${port}`) })
+      }
+    }
+    ctxMenu = { x: e.clientX, y: e.clientY, items }
+  }
+
+  function openProtoMenu(e: MouseEvent, pkt: Packet): void {
+    e.preventDefault()
+    const proto = pkt.protocol
+    ctxMenu = {
+      x: e.clientX, y: e.clientY,
+      items: [
+        { label: 'Filter for protocol', sub: `proto == ${proto}`, action: () => appendFilter(`proto == ${proto}`) },
+        { label: 'Exclude protocol',    sub: `not proto == ${proto}`, action: () => appendFilter(`not proto == ${proto}`) },
+        { separator: true },
+        { label: 'Copy value', sub: proto, action: () => copyText(proto) },
+        { label: 'Copy frame', sub: 'JSON', action: () => copyFrame(pkt) },
+      ],
+    }
+  }
+
   // ── Scroll handling ────────────────────────────────────────────────────────
   function handleScroll(e: Event): void {
     const el = e.target as HTMLElement
     scrollTop  = el.scrollTop
-    autoScroll = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+    nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60
   }
 
-  // In live mode the scroll container has overflow:hidden so the user can't
-  // scroll manually. We intercept wheel events instead and use them to switch
-  // to browse mode, remapping the wheel delta to the correct position in the
-  // full virtual layout (relative to the tail, not the 200-row DOM window).
   function handleWheel(e: WheelEvent): void {
-    if (!($isCapturing && autoScroll)) return   // already in browse mode — ignore
-    if (e.deltaY >= 0) return                   // scrolling down while live — ignore
+    if (!($isCapturing && liveFollow)) return
+    if (e.deltaY >= 0) return
     e.preventDefault()
-
-    // Normalize to pixels (deltaMode 1 = lines)
     const dy = e.deltaMode === 1 ? e.deltaY * ROW_H : e.deltaY
-
-    // Position the virtual window so the bottom of the list is in view,
-    // then apply the wheel delta upward from there.
     const viewportRows = Math.floor((bodyEl?.clientHeight ?? 600) / ROW_H)
     const target = Math.max(0, Math.max(0, total - viewportRows) * ROW_H + dy)
-
-    autoScroll = false
-    scrollTop  = target    // drives reactive block to the right slice immediately
+    nearBottom = false
+    scrollTop  = target
     tick().then(() => { if (bodyEl) bodyEl.scrollTop = target })
   }
 
   function jumpToLive() {
-    autoScroll = true
+    autoScrollEnabled.set(true)
+    nearBottom = true
     tick().then(() => { if (bodyEl) bodyEl.scrollTop = bodyEl.scrollHeight })
   }
 
   function selectAndPin(pkt: Packet): void {
-    // If the user explicitly clicks a different packet, stop tracking
     if ($trackMode && $selectedPacket?.id !== pkt.id) {
       trackMode.set(false)
       trackFingerprint.set(null)
       trackPrev.set(null)
     }
     selectedPacket.set(pkt)
-    if (!($isCapturing && autoScroll)) return  // already in browse mode, nothing extra
+    if (!($isCapturing && liveFollow)) return
 
-    // Find the packet's position in the full list and center it in the viewport
     const idx = $filteredPackets.findIndex(p => p.id === pkt.id)
     if (idx === -1) return
-
     const viewportRows = Math.floor((bodyEl?.clientHeight ?? 600) / ROW_H)
     const target = Math.max(0, (idx - Math.floor(viewportRows / 2)) * ROW_H)
-
-    autoScroll = false
+    nearBottom = false
     scrollTop  = target
     tick().then(() => { if (bodyEl) bodyEl.scrollTop = target })
   }
@@ -101,14 +269,11 @@
   let display: Packet[] = []
 
   $: {
-    if ($isCapturing && autoScroll) {
-      // Live tail mode: pin to the last 200 rows, zero virtual overhead
+    if ($isCapturing && liveFollow) {
       display   = $filteredPackets.slice(-200)
       padTop    = 0
       padBottom = 0
     } else {
-      // Browse mode: virtual window driven by scroll position.
-      // Used both when stopped AND when capturing but the user has scrolled up.
       const visStart = Math.max(0, Math.floor(scrollTop / ROW_H) - BUFFER)
       const visEnd   = Math.min(total, visStart + RENDER)
       display   = $filteredPackets.slice(visStart, visEnd)
@@ -117,24 +282,23 @@
     }
   }
 
-  // When capture stops while in live mode, scroll to bottom so the virtual
-  // window aligns correctly with the new phantom spacers.
-  // If the user was already browsing, leave their position alone.
   let prevCapturing = false
   $: {
-    if (prevCapturing && !$isCapturing && autoScroll) {
+    if (prevCapturing && !$isCapturing && nearBottom) {
       tick().then(() => { if (bodyEl) bodyEl.scrollTop = bodyEl.scrollHeight })
     }
     prevCapturing = $isCapturing
   }
 
   afterUpdate(() => {
-    if (autoScroll && $isCapturing && bodyEl)
+    if (liveFollow && $isCapturing && bodyEl)
       bodyEl.scrollTop = bodyEl.scrollHeight
   })
-
-  const COLS = '52px 90px 172px 172px 72px 58px 1fr'
 </script>
+
+{#if ctxMenu}
+  <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} on:close={() => ctxMenu = null} />
+{/if}
 
 <div class="flex flex-col flex-1 min-h-0 font-mono text-xs">
   <!-- Header row -->
@@ -143,26 +307,67 @@
            bg-[var(--nc-surface-1)] border-b border-[var(--nc-border)] z-10"
     style="grid-template-columns:{COLS}"
   >
-    <div class="px-3 py-2">No.</div>
-    <div class="px-3 py-2">Time</div>
-    <div class="px-3 py-2">Source</div>
-    <div class="px-3 py-2">Destination</div>
-    <div class="px-3 py-2">Proto</div>
-    <div class="px-3 py-2">Len</div>
-    <div class="px-3 py-2">Info</div>
+    {#if $columnVisibility.no}
+      <!-- svelte-ignore a11y-no-static-element-interactions -->
+      <div class="px-3 py-2 relative group/rh select-none" on:mousedown|stopPropagation>
+        No.
+        <div class="absolute right-0 top-0 h-full w-1.5 cursor-col-resize opacity-0 group-hover/rh:opacity-100 hover:bg-blue-400/40 transition-opacity"
+          on:mousedown|stopPropagation={(e) => startResize(e, 'no')}></div>
+      </div>
+    {/if}
+    {#if $columnVisibility.time}
+      <!-- svelte-ignore a11y-no-static-element-interactions -->
+      <div class="px-3 py-2 relative group/rh select-none" on:mousedown|stopPropagation>
+        Time
+        <div class="absolute right-0 top-0 h-full w-1.5 cursor-col-resize opacity-0 group-hover/rh:opacity-100 hover:bg-blue-400/40 transition-opacity"
+          on:mousedown|stopPropagation={(e) => startResize(e, 'time')}></div>
+      </div>
+    {/if}
+    {#if $columnVisibility.source}
+      <!-- svelte-ignore a11y-no-static-element-interactions -->
+      <div class="px-3 py-2 relative group/rh select-none" on:mousedown|stopPropagation>
+        Source
+        <div class="absolute right-0 top-0 h-full w-1.5 cursor-col-resize opacity-0 group-hover/rh:opacity-100 hover:bg-blue-400/40 transition-opacity"
+          on:mousedown|stopPropagation={(e) => startResize(e, 'source')}></div>
+      </div>
+    {/if}
+    {#if $columnVisibility.destination}
+      <!-- svelte-ignore a11y-no-static-element-interactions -->
+      <div class="px-3 py-2 relative group/rh select-none" on:mousedown|stopPropagation>
+        Destination
+        <div class="absolute right-0 top-0 h-full w-1.5 cursor-col-resize opacity-0 group-hover/rh:opacity-100 hover:bg-blue-400/40 transition-opacity"
+          on:mousedown|stopPropagation={(e) => startResize(e, 'destination')}></div>
+      </div>
+    {/if}
+    {#if $columnVisibility.proto}
+      <!-- svelte-ignore a11y-no-static-element-interactions -->
+      <div class="px-3 py-2 relative group/rh select-none" on:mousedown|stopPropagation>
+        Proto
+        <div class="absolute right-0 top-0 h-full w-1.5 cursor-col-resize opacity-0 group-hover/rh:opacity-100 hover:bg-blue-400/40 transition-opacity"
+          on:mousedown|stopPropagation={(e) => startResize(e, 'proto')}></div>
+      </div>
+    {/if}
+    {#if $columnVisibility.length}
+      <!-- svelte-ignore a11y-no-static-element-interactions -->
+      <div class="px-3 py-2 relative group/rh select-none" on:mousedown|stopPropagation>
+        Len
+        <div class="absolute right-0 top-0 h-full w-1.5 cursor-col-resize opacity-0 group-hover/rh:opacity-100 hover:bg-blue-400/40 transition-opacity"
+          on:mousedown|stopPropagation={(e) => startResize(e, 'length')}></div>
+      </div>
+    {/if}
+    {#if $columnVisibility.info}
+      <div class="px-3 py-2 select-none">Info</div>
+    {/if}
   </div>
 
   <!-- Scrollable rows -->
-  <!-- overflow:hidden in live mode removes the scrollbar and prevents drag-scrolling;
-       wheel events are intercepted above to trigger the browse-mode transition. -->
   <div
     bind:this={bodyEl}
     on:scroll={handleScroll}
     on:wheel={handleWheel}
     class="flex-1 overflow-x-hidden"
-    style="overflow-y: {$isCapturing && autoScroll ? 'hidden' : 'auto'}"
+    style="overflow-y: {$isCapturing && liveFollow ? 'hidden' : 'auto'}"
   >
-    <!-- Phantom spacer — represents packets above the virtual window -->
     {#if padTop > 0}
       <div style="height:{padTop}px" aria-hidden="true"></div>
     {/if}
@@ -176,22 +381,52 @@
         on:click={() => selectAndPin(pkt)}
         role="row"
       >
-        <div class="px-3 py-1.5 text-[var(--nc-fg-4)] tabular-nums">{pkt.id}</div>
-        <div class="px-3 py-1.5 text-[var(--nc-fg-3)] tabular-nums">{pkt.timestamp}</div>
-        <div class="px-3 py-1.5 text-[var(--nc-fg-1)] truncate">
-          {pkt.src_ip}{pkt.src_port != null ? ':' + pkt.src_port : ''}
-        </div>
-        <div class="px-3 py-1.5 text-[var(--nc-fg-1)] truncate">
-          {pkt.dst_ip}{pkt.dst_port != null ? ':' + pkt.dst_port : ''}
-        </div>
-        <div class="px-3 py-1.5">
-          <span class="px-1.5 py-0.5 rounded text-[10px] font-bold text-white"
-            style={badgeStyle(pkt.protocol)}>
-            {pkt.protocol}
-          </span>
-        </div>
-        <div class="px-3 py-1.5 text-[var(--nc-fg-3)] tabular-nums">{pkt.length}</div>
-        <div class="px-3 py-1.5 text-[var(--nc-fg-2)] truncate">{pkt.info}</div>
+        {#if $columnVisibility.no}
+          <div class="px-3 py-1.5 text-[var(--nc-fg-4)] tabular-nums">{pkt.id}</div>
+        {/if}
+        {#if $columnVisibility.time}
+          <div class="px-3 py-1.5 text-[var(--nc-fg-3)] tabular-nums">
+            {$timestampMode === 'absolute' ? (pkt.abs_time ?? pkt.timestamp) : pkt.timestamp}
+          </div>
+        {/if}
+        {#if $columnVisibility.source}
+          <!-- svelte-ignore a11y-no-static-element-interactions -->
+          <div
+            class="px-3 py-1.5 truncate {hasName(pkt.src_ip, pkt.src_port, $addressBook) ? 'text-blue-300' : 'text-[var(--nc-fg-1)]'}"
+            on:contextmenu|stopPropagation={(e) => openSrcMenu(e, pkt)}
+            title="{pkt.src_ip}{pkt.src_port != null ? ':' + pkt.src_port : ''}"
+          >
+            {displayAddr(pkt.src_ip, pkt.src_port, $addressBook)}
+          </div>
+        {/if}
+        {#if $columnVisibility.destination}
+          <!-- svelte-ignore a11y-no-static-element-interactions -->
+          <div
+            class="px-3 py-1.5 truncate {hasName(pkt.dst_ip, pkt.dst_port, $addressBook) ? 'text-blue-300' : 'text-[var(--nc-fg-1)]'}"
+            on:contextmenu|stopPropagation={(e) => openDstMenu(e, pkt)}
+            title="{pkt.dst_ip}{pkt.dst_port != null ? ':' + pkt.dst_port : ''}"
+          >
+            {displayAddr(pkt.dst_ip, pkt.dst_port, $addressBook)}
+          </div>
+        {/if}
+        {#if $columnVisibility.proto}
+          <!-- svelte-ignore a11y-no-static-element-interactions -->
+          <div
+            class="px-3 py-1.5"
+            on:contextmenu|stopPropagation={(e) => openProtoMenu(e, pkt)}
+          >
+            <span class="px-1.5 py-0.5 rounded text-[10px] font-bold text-white"
+              style={badgeStyle(pkt.protocol)}>
+              {pkt.protocol}
+            </span>
+          </div>
+        {/if}
+        {#if $columnVisibility.length}
+          <div class="px-3 py-1.5 text-[var(--nc-fg-3)] tabular-nums">{pkt.length}</div>
+        {/if}
+        {#if $columnVisibility.info}
+          <div class="px-3 py-1.5 text-[var(--nc-fg-2)] truncate">{pkt.info}</div>
+        {/if}
       </div>
     {:else}
       <div class="flex items-center justify-center h-32 text-[var(--nc-fg-5)] select-none">
@@ -199,14 +434,13 @@
       </div>
     {/each}
 
-    <!-- Phantom spacer — represents packets below the virtual window -->
     {#if padBottom > 0}
       <div style="height:{padBottom}px" aria-hidden="true"></div>
     {/if}
   </div>
 
-  <!-- "Jump to live" banner — shown when capturing but the user has scrolled away -->
-  {#if $isCapturing && !autoScroll}
+  <!-- "Jump to live" banner -->
+  {#if $isCapturing && !liveFollow}
     <!-- svelte-ignore a11y-click-events-have-key-events -->
     <!-- svelte-ignore a11y-interactive-supports-focus -->
     <div

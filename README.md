@@ -190,9 +190,59 @@ register_interpreter(MyProtocol())
 
 #### Exported symbols
 
+#### Address Book
+
+Map IP addresses (and IP:port pairs) to human-readable names. Names are shown in the Source and Destination columns of the packet table, highlighted in blue. The address book can be pre-populated at startup and edited live by the user via the **Addresses** button in the toolbar.
+
+Pass initial entries to `create_router()`:
+
+```python
+app.include_router(create_router(
+    address_book=[
+        {"id": "1", "address": "192.168.1.100",      "name": "My Sensor"},
+        {"id": "2", "address": "192.168.1.100:9001",  "name": "Sensor Feed", "notes": "UDP port 9001"},
+        {"id": "3", "address": "127.0.0.1",           "name": "Localhost"},
+    ],
+), prefix="/netcapture")
+```
+
+Each entry requires `id`, `address`, and `name`. `notes` is optional. The `address` field accepts:
+- `"192.168.1.1"` — matches all traffic to/from that IP
+- `"192.168.1.1:9001"` — matches only that IP+port combination (checked first)
+
+**Filtering with names:**
+
+Once an address is named, you can filter by name in the filter bar:
+
+```
+src_name == "My Sensor"         # source resolves to this name
+dst_name == "Sensor Feed"       # destination resolves to this name
+addr_name == "My Sensor"        # either direction
+ip.src == "My Sensor"           # ip.src also accepts resolved names
+```
+
+**Right-click filter menus:**
+
+Right-clicking the Source, Destination, or Proto cell of any row shows a context menu with quick filter options:
+- **Filter for / Exclude** — appends `ip.src == x`, `ip.dst == x`, or `proto == x` to the active filter
+- **Filter / Exclude by name** — appears when the address has a resolved name; uses `src_name`/`dst_name`
+- **Filter source/dest port** — appends a port condition
+
+The appended clause is always combined with the existing filter using `and`, wrapped in parentheses.
+
+**Testing with the UDP mock device:**
+
+Add `127.0.0.1` or `127.0.0.1:9001` to the address book to name the mock device traffic:
+
+```python
+address_book=[{"id": "1", "address": "127.0.0.1:9001", "name": "UDP Mock Device"}]
+```
+
+Then start the mock device and start capturing — the Source column will show **UDP Mock Device** instead of the raw IP.
+
 | Symbol | What it is |
 |--------|-----------|
-| `create_router(profiles, extra_interpreters)` | FastAPI router factory |
+| `create_router(profiles, extra_interpreters, address_book)` | FastAPI router factory |
 | `register_interpreter(interp)` | Add an interpreter to the global registry |
 | `Interpreter` | `Protocol` class — use for type hints when building interpreters |
 | `DecodedFrame` | Return type of `decode()` — holds interpreter name + field list |
@@ -300,7 +350,9 @@ src_ip == 10.0.0.1 or src_ip == 10.0.0.2
 not protocol == ICMP
 ```
 
-Fields: `src_ip`, `dst_ip`, `src_port`, `dst_port`, `protocol`, `length`, `ttl`, `info`, `interpreter`, `decoded.<field>`, `decoded.<field>.<nested>`
+Fields: `src_ip`/`ip.src`, `dst_ip`/`ip.dst`, `ip.addr`, `src_name`, `dst_name`, `addr_name`, `src_port`/`src.port`, `dst_port`/`dst.port`, `port`, `protocol`/`proto`, `info`, `interpreter`, `decoded.<field>`, `decoded.<field>.<nested>`
+
+`ip.src` and `ip.dst` also match against resolved address book names, so `ip.src == "MyDevice"` works even though it's an IP field. `src_name`/`dst_name`/`addr_name` match exclusively on resolved names.
 
 Operators: `==`, `!=`, `<`, `<=`, `>`, `>=`, `contains`
 

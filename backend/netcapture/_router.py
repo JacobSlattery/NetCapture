@@ -45,6 +45,7 @@ def create_router(
     *,
     profiles: list[dict] | None = None,
     extra_interpreters: Sequence[Interpreter] | None = None,
+    address_book: list[dict] | None = None,
 ) -> APIRouter:
     """
     Return an APIRouter with all NetCapture HTTP and WebSocket routes.
@@ -71,6 +72,8 @@ def create_router(
     if profiles is None:
         from .profiles import DEFAULT_PROFILES
         profiles = DEFAULT_PROFILES
+
+    _address_book: list[dict] = list(address_book) if address_book else []
 
     router = APIRouter()
 
@@ -109,6 +112,16 @@ def create_router(
     @router.get("/api/profiles")
     async def list_profiles():
         return {"profiles": profiles}
+
+    @router.get("/api/address-book")
+    async def get_address_book():
+        return {"entries": _address_book}
+
+    @router.put("/api/address-book")
+    async def put_address_book(payload: dict):
+        nonlocal _address_book
+        _address_book = payload.get("entries", [])
+        return {"status": "ok"}
 
     @router.get("/api/capture/status")
     async def capture_status():

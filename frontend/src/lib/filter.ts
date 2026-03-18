@@ -37,7 +37,28 @@
  *   proto != ICMP
  */
 
-import type { Packet, DecodedValue } from './types'
+import type { Packet, DecodedValue, AddressBookEntry } from './types'
+
+// ── Address book resolution ────────────────────────────────────────────────────
+// Module-level mirror updated via setAddressBook() from captureService.
+
+let _addressBook: AddressBookEntry[] = []
+
+export function setAddressBook(book: AddressBookEntry[]): void {
+  _addressBook = book
+}
+
+/** Resolve an IP (and optional port) to a name.  Returns the raw IP if not found. */
+function resolveAddr(ip: string, port: number | null): string {
+  const ipLower = (ip ?? '').toLowerCase()
+  if (port != null) {
+    const key = `${ipLower}:${port}`
+    const hit = _addressBook.find(e => e.address.toLowerCase() === key)
+    if (hit) return hit.name.toLowerCase()
+  }
+  const hit = _addressBook.find(e => e.address.toLowerCase() === ipLower)
+  return hit?.name.toLowerCase() ?? ipLower
+}
 
 // ── DecodedValue flattening ────────────────────────────────────────────────────
 // For primitives returns [String(v)].
@@ -79,6 +100,7 @@ interface Token { kind: TokKind; value: string }
 
 export const KNOWN_FIELDS = new Set([
   'ip.src', 'ip.dst', 'ip.addr',
+  'src_name', 'dst_name', 'addr_name',
   'port', 'src.port', 'dst.port',
   'tcp.srcport', 'tcp.dstport',
   'udp.srcport', 'udp.dstport',
@@ -255,9 +277,13 @@ function evalCmp(field: string, op: string, rawValue: string, p: Packet): boolea
   // Resolve field to one or more candidate strings
   let candidates: string[]
   switch (field) {
-    case 'ip.src':                                          candidates = [(p.src_ip  ?? '').toLowerCase()]; break
-    case 'ip.dst':                                          candidates = [(p.dst_ip  ?? '').toLowerCase()]; break
-    case 'ip.addr':                                         candidates = [(p.src_ip  ?? '').toLowerCase(), (p.dst_ip ?? '').toLowerCase()]; break
+    case 'ip.src':   candidates = [(p.src_ip ?? '').toLowerCase(), resolveAddr(p.src_ip, p.src_port)]; break
+    case 'ip.dst':   candidates = [(p.dst_ip ?? '').toLowerCase(), resolveAddr(p.dst_ip, p.dst_port)]; break
+    case 'ip.addr':  candidates = [(p.src_ip ?? '').toLowerCase(), (p.dst_ip ?? '').toLowerCase(),
+                                    resolveAddr(p.src_ip, p.src_port), resolveAddr(p.dst_ip, p.dst_port)]; break
+    case 'src_name': candidates = [resolveAddr(p.src_ip, p.src_port)]; break
+    case 'dst_name': candidates = [resolveAddr(p.dst_ip, p.dst_port)]; break
+    case 'addr_name': candidates = [resolveAddr(p.src_ip, p.src_port), resolveAddr(p.dst_ip, p.dst_port)]; break
     case 'port': case 'tcp.port': case 'udp.port':          candidates = [srcPort, dstPort]; break
     case 'src.port': case 'tcp.srcport': case 'udp.srcport': candidates = [srcPort]; break
     case 'dst.port': case 'tcp.dstport': case 'udp.dstport': candidates = [dstPort]; break

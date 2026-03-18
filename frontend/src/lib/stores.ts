@@ -3,6 +3,7 @@ import { parseFilter, matchesFilter } from './filter'
 import type {
   Packet, NetworkInterface, Stats, ChartPoint,
   CaptureMode, ConnectionStatus, CaptureProfile, TrackFingerprint,
+  AddressBookEntry,
 } from './types'
 
 // All captured packets (capped at MAX_PACKETS in captureService)
@@ -43,8 +44,62 @@ export const activeProfile = writable<CaptureProfile | null>(null);
   })
 }
 
+// Address book — maps IP / IP:port to human-readable names
+export const addressBook = writable<AddressBookEntry[]>([])
+
+// When non-null, Toolbar will open the address book editor pre-filled with this address
+export const addressBookPrefill = writable<string | null>(null)
+
+// Timestamp (ms) of last successful track-mode packet match — null until first match
+export const trackLastUpdate = writable<number | null>(null)
+
+// Timestamp display mode: 'relative' (session offset) or 'absolute' (wall clock)
+export const timestampMode = writable<'relative' | 'absolute'>(
+  (localStorage.getItem('nc:timestampMode') as 'relative' | 'absolute') ?? 'relative'
+)
+timestampMode.subscribe(v => localStorage.setItem('nc:timestampMode', v))
+
 // BPF-style display filter (client-side)
 export const captureFilter = writable<string>('')
+
+// Auto-scroll: follow newest packets during live capture
+export const autoScrollEnabled = writable<boolean>(
+  localStorage.getItem('nc:autoScroll') !== 'false'
+)
+autoScrollEnabled.subscribe(v => localStorage.setItem('nc:autoScroll', String(v)))
+
+// Max packets kept in the rolling buffer
+export const maxPackets = writable<number>(
+  Math.max(100, Number(localStorage.getItem('nc:maxPackets') || 10000))
+)
+maxPackets.subscribe(v => localStorage.setItem('nc:maxPackets', String(v)))
+
+// Auto-stop after N packets (0 = unlimited)
+export const capturePacketLimit = writable<number>(
+  Math.max(0, Number(localStorage.getItem('nc:packetLimit') || 0))
+)
+capturePacketLimit.subscribe(v => localStorage.setItem('nc:packetLimit', String(v)))
+
+// Ring buffer: keep newest N packets (true) vs keep all (false)
+export const ringBuffer = writable<boolean>(
+  localStorage.getItem('nc:ringBuffer') !== 'false'
+)
+ringBuffer.subscribe(v => localStorage.setItem('nc:ringBuffer', String(v)))
+
+// Column visibility for the packet table
+export interface ColumnVisibility {
+  no: boolean; time: boolean; source: boolean; destination: boolean
+  proto: boolean; length: boolean; info: boolean
+}
+const _CV_DEFAULT: ColumnVisibility = {
+  no: true, time: true, source: true, destination: true,
+  proto: true, length: true, info: true,
+}
+export const columnVisibility = writable<ColumnVisibility>((() => {
+  try { return { ..._CV_DEFAULT, ...JSON.parse(localStorage.getItem('nc:colVis') ?? '{}') } }
+  catch { return { ..._CV_DEFAULT } }
+})())
+columnVisibility.subscribe(v => localStorage.setItem('nc:colVis', JSON.stringify(v)))
 
 // Aggregate stats updated each second
 export const stats = writable<Stats>({

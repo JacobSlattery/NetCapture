@@ -3,21 +3,89 @@
   import {
     isCapturing, connectionStatus, selectedInterface,
     interfaces, captureFilter, captureMode, profiles, activeProfile, packets,
+    addressBook, addressBookPrefill, timestampMode,
+    autoScrollEnabled, maxPackets, capturePacketLimit, ringBuffer, columnVisibility,
   } from '../stores'
-  import type { CaptureProfile, DecodedValue } from '../types'
-  import { exportCapture, importCapture } from '../captureService'
+  import type { CaptureProfile, DecodedValue, AddressBookEntry } from '../types'
+  import type { ColumnVisibility } from '../stores'
+  import { exportCapture, importCapture, saveAddressBook } from '../captureService'
   import { parseFilter, tokenize, KNOWN_FIELDS } from '../filter'
+  import AddressBookEditor from './AddressBookEditor.svelte'
+  import PresetEditor from './PresetEditor.svelte'
 
-  let fileInput: HTMLInputElement
+  const dispatch = createEventDispatcher()
 
-  async function handleImport(e: Event): Promise<void> {
+  // ── Modal / panel state ────────────────────────────────────────────────────
+  let showSettings     = false
+  let showPresets      = false   // filter-bar presets dropdown
+  let showAddressBook  = false
+  let showPresetEditor = false
+  let addressPrefill   = ''
+
+  // Open address book editor when another component (e.g. PacketTable) requests it
+  $: if ($addressBookPrefill !== null) {
+    addressPrefill  = $addressBookPrefill
+    showAddressBook = true
+    addressBookPrefill.set(null)
+  }
+
+  // ── File input refs ────────────────────────────────────────────────────────
+  let captureFileInput:  HTMLInputElement
+  let addrBookFileInput: HTMLInputElement
+  let presetFileInput:   HTMLInputElement
+
+  async function handleCaptureImport(e: Event): Promise<void> {
     const file = (e.target as HTMLInputElement).files?.[0]
     if (!file) return
     try { await importCapture(file) } catch (err) { console.error('[import]', err) }
-    finally { fileInput.value = '' }
+    finally { captureFileInput.value = '' }
   }
 
-  const dispatch = createEventDispatcher()
+  function exportAddrBook(): void {
+    download('netcapture-addresses.json', JSON.stringify($addressBook, null, 2))
+  }
+
+  function handleAddrBookImport(e: Event): void {
+    const file = (e.target as HTMLInputElement).files?.[0]
+    if (!file) return
+    file.text().then(text => {
+      try {
+        const parsed = JSON.parse(text) as AddressBookEntry[]
+        if (!Array.isArray(parsed)) throw new Error('Expected a JSON array')
+        addressBook.set(parsed)
+        saveAddressBook(parsed)
+      } catch (err) { console.error('[addr-import]', err) }
+    }).finally(() => { addrBookFileInput.value = '' })
+  }
+
+  function exportPresets(): void {
+    download('netcapture-presets.json', JSON.stringify(userPresets, null, 2))
+  }
+
+  function handlePresetImport(e: Event): void {
+    const file = (e.target as HTMLInputElement).files?.[0]
+    if (!file) return
+    file.text().then(text => {
+      try {
+        const parsed = JSON.parse(text) as { title: string; filter: string }[]
+        if (!Array.isArray(parsed)) throw new Error('Expected a JSON array')
+        // Merge: skip duplicates by filter string
+        const existing = new Set(userPresets.map(p => p.filter))
+        const merged = [...userPresets, ...parsed.filter(p => !existing.has(p.filter))]
+        saveUserPresets(merged)
+      } catch (err) { console.error('[preset-import]', err) }
+    }).finally(() => { presetFileInput.value = '' })
+  }
+
+  // ── Download helper ────────────────────────────────────────────────────────
+  function download(filename: string, content: string): void {
+    const blob = new Blob([content], { type: 'application/json' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href = url; a.download = filename
+    document.body.appendChild(a); a.click()
+    document.body.removeChild(a); URL.revokeObjectURL(url)
+  }
 
   // ── Profile / interface selection ──────────────────────────────────────────
 
@@ -58,48 +126,56 @@
   $: modeLabel = (MODE_LABEL as Record<string, string>)[$captureMode] ?? null
   $: modeStyle = MODE_STYLE[$captureMode] ?? ''
 
-  // ── Filter presets ─────────────────────────────────────────────────────────
+  // ── Built-in filter presets ────────────────────────────────────────────────
 
-  const PRESETS: { title: string; filter: string }[] = [
-    // ── Protocol basics ──────────────────────────────────────────────────────
+  const BUILTIN_PRESETS: { title: string; filter: string }[] = [
     { title: 'TCP only',                    filter: 'tcp' },
     { title: 'UDP only',                    filter: 'udp' },
     { title: 'ICMP only',                   filter: 'icmp' },
     { title: 'ARP only',                    filter: 'arp' },
     { title: 'Exclude ARP',                 filter: 'not arp' },
-    { title: 'Exclude TCP and UDP',         filter: 'not tcp && not udp' },
-    // ── Common application ports ─────────────────────────────────────────────
     { title: 'HTTP (port 80)',              filter: 'proto == HTTP || port == 80' },
     { title: 'HTTPS / TLS (port 443)',      filter: 'proto == TLS || port == 443' },
     { title: 'DNS (port 53)',               filter: 'proto == DNS || port == 53' },
     { title: 'SSH (port 22)',               filter: 'port == 22' },
     { title: 'Web traffic (80 or 443)',     filter: 'port == 80 || port == 443' },
     { title: 'UDP Device feed (port 9001)', filter: 'port == 9001' },
-    // ── Port direction ───────────────────────────────────────────────────────
     { title: 'Inbound to port 80',          filter: 'dst.port == 80' },
     { title: 'Outbound from port 80',       filter: 'src.port == 80' },
-    { title: 'High ports (> visible via !=)', filter: 'dst.port != 80 && dst.port != 443 && dst.port != 53' },
-    // ── IP address filters ───────────────────────────────────────────────────
     { title: 'Specific host (either dir)',  filter: 'ip.addr == 192.168.1.1' },
     { title: 'From specific host',          filter: 'ip.src == 192.168.1.1' },
     { title: 'To specific host',            filter: 'ip.dst == 192.168.1.1' },
     { title: 'Subnet match (contains)',     filter: 'ip.addr contains 192.168' },
     { title: 'Exclude host',               filter: 'ip.addr != 192.168.1.1' },
     { title: 'Between two hosts',           filter: 'ip.src == 192.168.1.1 || ip.src == 10.0.0.1' },
-    // ── Combined conditions ──────────────────────────────────────────────────
     { title: 'TCP from specific host',      filter: 'ip.src == 192.168.1.1 && proto == TCP' },
-    { title: 'TCP to web ports',            filter: 'tcp && (port == 80 || port == 443)' },
-    { title: 'Not local, not ARP',          filter: 'not arp && ip.src != 192.168.1.1' },
-    // ── Info / content filters ───────────────────────────────────────────────
     { title: 'TCP SYN packets',             filter: 'tcp && info contains "SYN"' },
     { title: 'TLS handshake',               filter: 'info contains "handshake"' },
     { title: 'ICMP echo (ping)',            filter: 'icmp && (info contains "request" || info contains "reply")' },
-    // ── Interpreter / decoded field filters ──────────────────────────────────
     { title: 'NC-Frame packets only',       filter: 'interpreter == NC-Frame' },
     { title: 'Decoded field equals value',  filter: 'decoded.temperature == 25.0' },
-    { title: 'Decoded field contains text', filter: 'decoded.status contains "ok"' },
     { title: 'NC-Frame on UDP port 9001',   filter: 'interpreter == NC-Frame && port == 9001' },
   ]
+
+  // ── User presets (localStorage) ───────────────────────────────────────────
+
+  const PRESET_KEY = 'nc:userPresets'
+  type UserPreset = { title: string; filter: string }
+
+  // Seed with built-ins on first launch (when key is absent); otherwise use saved list
+  let userPresets: UserPreset[] = (() => {
+    try {
+      const saved = localStorage.getItem(PRESET_KEY)
+      if (saved === null) return BUILTIN_PRESETS.map(p => ({ ...p }))
+      return JSON.parse(saved) as UserPreset[]
+    }
+    catch { return BUILTIN_PRESETS.map(p => ({ ...p })) }
+  })()
+
+  function saveUserPresets(presets: UserPreset[]): void {
+    userPresets = presets
+    localStorage.setItem(PRESET_KEY, JSON.stringify(presets))
+  }
 
   // ── Filter history ─────────────────────────────────────────────────────────
 
@@ -118,7 +194,6 @@
 
   // ── Decoded field path discovery ──────────────────────────────────────────
 
-  /** Collect every accessible dot-path from a decoded value, including intermediate nodes. */
   function collectDecodedPaths(v: DecodedValue, prefix: string, out: Set<string>): void {
     out.add(prefix)
     if (Array.isArray(v)) {
@@ -151,13 +226,11 @@
   const OPERATORS   = ['==', '!=', 'contains']
   const COMBINERS   = ['&&', '||', 'and', 'or']
 
-  /** Split input at the start of the last partial token being typed. */
   function splitAtCurrentWord(input: string): { prefix: string; currentWord: string } {
     const m = input.match(/^([\s\S]*[\s()])(\S*)$/)
     return m ? { prefix: m[1], currentWord: m[2] } : { prefix: '', currentWord: input }
   }
 
-  /** Infer what kind of token is expected next, based on the tokens before the cursor. */
   function getContext(prefix: string): 'start' | 'after-field' | 'after-op' | 'after-value' | 'after-not' {
     const trimmed = prefix.trimEnd()
     if (!trimmed) return 'start'
@@ -183,7 +256,6 @@
     const seen       = new Set<string>()
     const out: Suggestion[] = []
 
-    // History: entries whose full text starts with the current input
     for (const h of history) {
       if (h !== input && h.toLowerCase().startsWith(inputLower)) {
         out.push({ kind: 'history', label: h, insertText: h })
@@ -191,12 +263,10 @@
       }
     }
 
-    // Keyword/field completions based on grammatical context
     const ctx = getContext(prefix)
     if (ctx !== 'after-op') {
       let candidates: string[] = []
       if (ctx === 'start' || ctx === 'after-not') {
-        // Merge static fields with live-discovered decoded paths; deduplicate
         const fieldCandidates = [...new Set([...ALL_FIELDS, ...decodedPaths])]
         candidates = [...fieldCandidates, ...PROTOCOLS, ...(ctx === 'start' ? ['not'] : [])]
       }
@@ -222,11 +292,10 @@
   // ── Filter bar state ───────────────────────────────────────────────────────
 
   let pendingFilter = $captureFilter
-  let showPresets   = false
   let focused       = false
   let selectedIdx   = -1
 
-  $: if ($captureFilter === '') pendingFilter = ''
+  $: if (!focused) pendingFilter = $captureFilter
   $: filterResult      = parseFilter(pendingFilter)
   $: filterEmpty       = !pendingFilter.trim()
   $: filterBorderColor = filterEmpty
@@ -245,7 +314,7 @@
     protocol: 'bg-green-900/40           text-green-300',
   }
 
-  function closeDropdowns(): void { showPresets = false; focused = false }
+  function closeDropdowns(): void { showPresets = false; showSettings = false; focused = false }
 
   function applyFilter(): void {
     if (!filterResult.valid) return
@@ -263,31 +332,15 @@
   function selectSuggestion(s: Suggestion): void {
     pendingFilter = s.insertText
     selectedIdx   = -1
-    if (s.kind === 'history') focused = false  // close after history pick; stay open for completions
+    if (s.kind === 'history') focused = false
   }
 
   function handleKeydown(e: KeyboardEvent): void {
     if (showSuggestions) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        selectedIdx = Math.min(selectedIdx + 1, suggestions.length - 1)
-        return
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        selectedIdx = Math.max(selectedIdx - 1, -1)
-        return
-      }
-      if (e.key === 'Tab') {
-        e.preventDefault()
-        selectedIdx = selectedIdx < suggestions.length - 1 ? selectedIdx + 1 : 0
-        return
-      }
-      if (e.key === 'Enter' && selectedIdx >= 0) {
-        e.preventDefault()
-        selectSuggestion(suggestions[selectedIdx])
-        return
-      }
+      if (e.key === 'ArrowDown') { e.preventDefault(); selectedIdx = Math.min(selectedIdx + 1, suggestions.length - 1); return }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); selectedIdx = Math.max(selectedIdx - 1, -1); return }
+      if (e.key === 'Tab')       { e.preventDefault(); selectedIdx = selectedIdx < suggestions.length - 1 ? selectedIdx + 1 : 0; return }
+      if (e.key === 'Enter' && selectedIdx >= 0) { e.preventDefault(); selectSuggestion(suggestions[selectedIdx]); return }
       if (e.key === 'Escape') { focused = false; selectedIdx = -1; return }
     }
     if (e.key === 'Enter')  { applyFilter(); return }
@@ -298,9 +351,40 @@
     }
     selectedIdx = -1
   }
+
+  // ── Column visibility list (typed so template needs no casts) ─────────────
+  const CV_COLS: { key: keyof ColumnVisibility; label: string }[] = [
+    { key: 'no',          label: 'No.'   },
+    { key: 'time',        label: 'Time'  },
+    { key: 'source',      label: 'Source'},
+    { key: 'destination', label: 'Dest'  },
+    { key: 'proto',       label: 'Proto' },
+    { key: 'length',      label: 'Length'},
+    { key: 'info',        label: 'Info'  },
+  ]
+
+  // ── Capture settings handlers ──────────────────────────────────────────────
+
+  function handleMaxPacketsChange(e: Event): void {
+    const v = Number((e.target as HTMLInputElement).value)
+    if (v >= 100) maxPackets.set(v)
+  }
+
+  function handlePacketLimitChange(e: Event): void {
+    capturePacketLimit.set(Math.max(0, Number((e.target as HTMLInputElement).value)))
+  }
+
+  function handleColVisChange(key: string, e: Event): void {
+    columnVisibility.update(v => ({ ...v, [key]: (e.target as HTMLInputElement).checked }))
+  }
 </script>
 
 <svelte:window on:click={closeDropdowns} />
+
+<!-- Hidden file inputs -->
+<input bind:this={captureFileInput}  type="file" accept=".json" class="hidden" on:change={handleCaptureImport} />
+<input bind:this={addrBookFileInput} type="file" accept=".json" class="hidden" on:change={handleAddrBookImport} />
+<input bind:this={presetFileInput}   type="file" accept=".json" class="hidden" on:change={handlePresetImport} />
 
 <div class="flex flex-col bg-[var(--nc-surface-1)] border-b border-[var(--nc-border)] select-none shrink-0">
 
@@ -361,32 +445,248 @@
       Clear
     </button>
 
-    <button on:click={exportCapture} disabled={$isCapturing}
-      class="flex items-center gap-1.5 bg-[var(--nc-surface-2)] hover:bg-[var(--nc-border)] text-[var(--nc-fg-1)]
-             px-3 py-1 rounded text-xs border border-[var(--nc-border)] transition-colors disabled:opacity-40">
-      <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-        <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/>
-        <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
-      </svg>
-      Export
-    </button>
-
-    <input bind:this={fileInput} type="file" accept=".json" class="hidden" on:change={handleImport} />
-    <button on:click={() => fileInput.click()} disabled={$isCapturing}
-      class="flex items-center gap-1.5 bg-[var(--nc-surface-2)] hover:bg-[var(--nc-border)] text-[var(--nc-fg-1)]
-             px-3 py-1 rounded text-xs border border-[var(--nc-border)] transition-colors disabled:opacity-40">
-      <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-        <path d="M9.25 13.25a.75.75 0 001.5 0V4.636l2.955 3.129a.75.75 0 001.09-1.03l-4.25-4.5a.75.75 0 00-1.09 0l-4.25 4.5a.75.75 0 101.09 1.03L9.25 4.636v8.614z"/>
-        <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
-      </svg>
-      Import
-    </button>
-
     {#if modeLabel}
       <span class="px-2 py-0.5 rounded border text-[10px] font-semibold tracking-wide" style={modeStyle}>
         {modeLabel}
       </span>
     {/if}
+
+    <!-- ── Settings dropdown ─────────────────────────────────────────────── -->
+    <div class="relative ml-auto" role="none" on:click|stopPropagation on:keydown|stopPropagation>
+      <button
+        on:click|stopPropagation={() => { showSettings = !showSettings; showPresets = false }}
+        class="flex items-center px-1 py-1 rounded border transition-colors
+               {showSettings
+                 ? 'bg-[var(--nc-surface-2)] border-[var(--nc-border)] text-[var(--nc-fg)]'
+                 : 'bg-[var(--nc-surface)] border-[var(--nc-border)] text-[var(--nc-fg-3)] hover:text-[var(--nc-fg)] hover:bg-[var(--nc-surface-2)]'}"
+        title="Settings"
+      >
+        <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M7.84 1.804A1 1 0 018.82 1h2.36a1 1 0 01.98.804l.331 1.652a6.993 6.993 0 011.929 1.115l1.598-.54a1 1 0 011.186.447l1.18 2.044a1 1 0 01-.205 1.251l-1.267 1.113a7.047 7.047 0 010 2.228l1.267 1.113a1 1 0 01.205 1.251l-1.18 2.044a1 1 0 01-1.186.447l-1.598-.54a6.993 6.993 0 01-1.929 1.115l-.33 1.652a1 1 0 01-.98.804H8.82a1 1 0 01-.98-.804l-.331-1.652a6.993 6.993 0 01-1.929-1.115l-1.598.54a1 1 0 01-1.186-.447l-1.18-2.044a1 1 0 01.205-1.251l1.267-1.113a7.048 7.048 0 010-2.228L1.821 7.773a1 1 0 01-.206-1.25l1.18-2.045a1 1 0 011.187-.447l1.598.54A6.992 6.992 0 017.51 3.456l.33-1.652zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
+        </svg>
+      </button>
+
+      {#if showSettings}
+        <div
+          class="absolute right-0 top-full mt-1 z-50 w-64 max-h-[80vh] overflow-y-auto
+                 bg-[var(--nc-surface-1)] border border-[var(--nc-border)] rounded shadow-xl"
+          role="none"
+          on:click|stopPropagation
+          on:keydown|stopPropagation
+        >
+
+          <!-- ── Recording ──────────────────────────────────────────────── -->
+          <div class="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider
+                      text-[var(--nc-fg-4)] border-b border-[var(--nc-border-1)]">
+            Recording
+          </div>
+          <button on:click={() => { exportCapture(); showSettings = false }}
+            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/>
+              <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
+            </svg>
+            Export Capture
+          </button>
+          <button on:click={() => { captureFileInput.click(); showSettings = false }} disabled={$isCapturing}
+            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors
+                   disabled:opacity-40 disabled:cursor-not-allowed">
+            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M9.25 13.25a.75.75 0 001.5 0V4.636l2.955 3.129a.75.75 0 001.09-1.03l-4.25-4.5a.75.75 0 00-1.09 0l-4.25 4.5a.75.75 0 101.09 1.03L9.25 4.636v8.614z"/>
+              <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
+            </svg>
+            Import Capture
+          </button>
+
+          <!-- ── Addresses ──────────────────────────────────────────────── -->
+          <div class="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider
+                      text-[var(--nc-fg-4)] border-t border-b border-[var(--nc-border-1)] mt-1">
+            Addresses
+          </div>
+          <button on:click={() => { showAddressBook = true; showSettings = false }}
+            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M10 2a.75.75 0 01.75.75v.258a33.186 33.186 0 016.668.83.75.75 0 01-.336 1.461 31.28 31.28 0 00-1.103-.232l1.702 7.545a.75.75 0 01-.387.832A4.981 4.981 0 0115 14c-.825 0-1.606-.2-2.294-.556a.75.75 0 01-.387-.832l1.77-7.849a31.743 31.743 0 00-3.339-.254v11.505a20.415 20.415 0 013.78.501.75.75 0 11-.339 1.46 18.927 18.927 0 00-3.441-.456V17.5a.75.75 0 01-1.5 0v-.921a18.927 18.927 0 00-3.441.456.75.75 0 11-.339-1.46 20.415 20.415 0 013.78-.501V4.509a31.743 31.743 0 00-3.339.254l1.77 7.849a.75.75 0 01-.387.832A4.979 4.979 0 015 14a4.981 4.981 0 01-2.294-.556.75.75 0 01-.387-.832l1.702-7.545c-.37.07-.738.146-1.103.232a.75.75 0 01-.336-1.46 33.186 33.186 0 016.668-.83V2.75A.75.75 0 0110 2z"/>
+            </svg>
+            Manage Addresses
+            {#if $addressBook.length}
+              <span class="ml-auto text-[10px] text-[var(--nc-fg-4)]">{$addressBook.length}</span>
+            {/if}
+          </button>
+          <button on:click={() => { exportAddrBook(); showSettings = false }}
+            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors
+                   disabled:opacity-40" disabled={!$addressBook.length}>
+            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/>
+              <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
+            </svg>
+            Export Address Book
+          </button>
+          <button on:click={() => { addrBookFileInput.click(); showSettings = false }}
+            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M9.25 13.25a.75.75 0 001.5 0V4.636l2.955 3.129a.75.75 0 001.09-1.03l-4.25-4.5a.75.75 0 00-1.09 0l-4.25 4.5a.75.75 0 101.09 1.03L9.25 4.636v8.614z"/>
+              <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
+            </svg>
+            Import Address Book
+          </button>
+
+          <!-- ── Filter Presets ──────────────────────────────────────────── -->
+          <div class="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider
+                      text-[var(--nc-fg-4)] border-t border-b border-[var(--nc-border-1)] mt-1">
+            Filter Presets
+          </div>
+          <button on:click={() => { showPresetEditor = true; showSettings = false }}
+            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M2 4.75A.75.75 0 012.75 4h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 4.75zm0 10.5a.75.75 0 01.75-.75h7.5a.75.75 0 010 1.5h-7.5a.75.75 0 01-.75-.75zM2 10a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 10z" clip-rule="evenodd"/>
+            </svg>
+            Manage Presets
+            {#if userPresets.length}
+              <span class="ml-auto text-[10px] text-[var(--nc-fg-4)]">{userPresets.length}</span>
+            {/if}
+          </button>
+          <button on:click={() => { exportPresets(); showSettings = false }}
+            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors
+                   disabled:opacity-40" disabled={!userPresets.length}>
+            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/>
+              <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
+            </svg>
+            Export Presets
+          </button>
+          <button on:click={() => { presetFileInput.click(); showSettings = false }}
+            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M9.25 13.25a.75.75 0 001.5 0V4.636l2.955 3.129a.75.75 0 001.09-1.03l-4.25-4.5a.75.75 0 00-1.09 0l-4.25 4.5a.75.75 0 101.09 1.03L9.25 4.636v8.614z"/>
+              <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
+            </svg>
+            Import Presets
+          </button>
+
+          <!-- ── Capture ────────────────────────────────────────────────── -->
+          <div class="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider
+                      text-[var(--nc-fg-4)] border-t border-b border-[var(--nc-border-1)] mt-1">
+            Capture
+          </div>
+          <!-- Buffer size -->
+          <div class="flex items-center justify-between px-3 py-2 text-xs text-[var(--nc-fg-2)]">
+            <span title="Max packets kept in the rolling buffer">Buffer size</span>
+            <div class="flex items-center gap-1">
+              <input type="number" min="100" max="1000000" step="1000"
+                value={$maxPackets}
+                on:change={handleMaxPacketsChange}
+                class="w-20 bg-[var(--nc-surface)] text-[var(--nc-fg)] border border-[var(--nc-border)]
+                       rounded px-1.5 py-0.5 text-xs text-right focus:outline-none focus:border-blue-500" />
+              <span class="text-[var(--nc-fg-4)]">pkts</span>
+            </div>
+          </div>
+          <!-- Ring buffer toggle -->
+          <div class="flex items-center justify-between px-3 py-2 text-xs text-[var(--nc-fg-2)]">
+            <span title="Keep newest N packets (On) or keep all (Off)">Ring buffer</span>
+            <div class="flex rounded border border-[var(--nc-border)] overflow-hidden text-[10px]">
+              <button on:click={() => ringBuffer.set(true)}
+                class="px-2 py-0.5 transition-colors
+                       {$ringBuffer ? 'bg-blue-700 text-white' : 'text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)]'}">
+                On
+              </button>
+              <button on:click={() => ringBuffer.set(false)}
+                class="px-2 py-0.5 transition-colors border-l border-[var(--nc-border)]
+                       {!$ringBuffer ? 'bg-blue-700 text-white' : 'text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)]'}">
+                Off
+              </button>
+            </div>
+          </div>
+          <!-- Auto-stop after N packets -->
+          <div class="flex items-center justify-between px-3 py-2 text-xs text-[var(--nc-fg-2)]">
+            <span title="Automatically stop capture after N packets (0 = unlimited)">Auto-stop after</span>
+            <div class="flex items-center gap-1">
+              <input type="number" min="0" max="10000000" step="1000"
+                value={$capturePacketLimit}
+                on:change={handlePacketLimitChange}
+                class="w-20 bg-[var(--nc-surface)] text-[var(--nc-fg)] border border-[var(--nc-border)]
+                       rounded px-1.5 py-0.5 text-xs text-right focus:outline-none focus:border-blue-500" />
+              <span class="text-[var(--nc-fg-4)]">pkts</span>
+            </div>
+          </div>
+
+          <!-- ── Display ──────────────────────────────────────────────────── -->
+          <div class="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider
+                      text-[var(--nc-fg-4)] border-t border-b border-[var(--nc-border-1)] mt-1">
+            Display
+          </div>
+          <!-- Timestamp format toggle -->
+          <div class="flex items-center justify-between px-3 py-2 text-xs text-[var(--nc-fg-2)]">
+            <div class="flex items-center gap-2">
+              <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 000-1.5h-3.25V5z" clip-rule="evenodd"/>
+              </svg>
+              Timestamp
+            </div>
+            <div class="flex rounded border border-[var(--nc-border)] overflow-hidden text-[10px]">
+              <button
+                on:click={() => timestampMode.set('relative')}
+                class="px-2 py-0.5 transition-colors
+                       {$timestampMode === 'relative'
+                         ? 'bg-blue-700 text-white'
+                         : 'text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)]'}">
+                Relative
+              </button>
+              <button
+                on:click={() => timestampMode.set('absolute')}
+                class="px-2 py-0.5 transition-colors border-l border-[var(--nc-border)]
+                       {$timestampMode === 'absolute'
+                         ? 'bg-blue-700 text-white'
+                         : 'text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)]'}">
+                Absolute
+              </button>
+            </div>
+          </div>
+          <!-- Auto-scroll toggle -->
+          <div class="flex items-center justify-between px-3 py-2 text-xs text-[var(--nc-fg-2)]">
+            <span title="Follow newest packets during live capture">Auto-scroll</span>
+            <div class="flex rounded border border-[var(--nc-border)] overflow-hidden text-[10px]">
+              <button on:click={() => autoScrollEnabled.set(true)}
+                class="px-2 py-0.5 transition-colors
+                       {$autoScrollEnabled ? 'bg-blue-700 text-white' : 'text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)]'}">
+                On
+              </button>
+              <button on:click={() => autoScrollEnabled.set(false)}
+                class="px-2 py-0.5 transition-colors border-l border-[var(--nc-border)]
+                       {!$autoScrollEnabled ? 'bg-blue-700 text-white' : 'text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)]'}">
+                Off
+              </button>
+            </div>
+          </div>
+          <!-- Column visibility -->
+          <div class="px-3 py-2 text-xs">
+            <div class="text-[10px] text-[var(--nc-fg-4)] mb-1.5 uppercase tracking-wide">Columns</div>
+            <div class="grid grid-cols-2 gap-x-4 gap-y-1.5">
+              {#each CV_COLS as col}
+                <label class="flex items-center gap-1.5 cursor-pointer text-[var(--nc-fg-2)]">
+                  <input type="checkbox"
+                    checked={$columnVisibility[col.key]}
+                    on:change={(e) => handleColVisChange(col.key, e)}
+                    class="w-3 h-3 accent-blue-500 cursor-pointer" />
+                  {col.label}
+                </label>
+              {/each}
+            </div>
+          </div>
+
+          <div class="pb-1"></div>
+        </div>
+      {/if}
+    </div>
+
   </div>
 
   <!-- ── Row 2: filter bar ────────────────────────────────────────────────── -->
@@ -397,14 +697,13 @@
     <!-- Presets button -->
     <div class="relative shrink-0">
       <button
-        on:click|stopPropagation={() => { showPresets = !showPresets; focused = false }}
+        on:click|stopPropagation={() => { showPresets = !showPresets; showSettings = false; focused = false }}
         title="Preset filters"
         class="flex items-center gap-1 px-2 py-1 rounded text-xs border transition-colors
                {showPresets
                  ? 'bg-[var(--nc-surface-2)] border-[var(--nc-border)] text-[var(--nc-fg)]'
                  : 'bg-[var(--nc-surface)] border-[var(--nc-border)] text-[var(--nc-fg-3)] hover:text-[var(--nc-fg)] hover:bg-[var(--nc-surface-2)]'}"
       >
-        <!-- bookmark icon -->
         <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
           <path d="M10.75 16.82A7.462 7.462 0 0115 15.5c.71 0 1.396.098 2.046.282A.75.75 0 0018 15.06v-11a.75.75 0 00-.546-.721A9.006 9.006 0 0015 3a8.963 8.963 0 00-4.25 1.065V16.82zM9.25 4.065A8.963 8.963 0 005 3c-.85 0-1.673.118-2.454.339A.75.75 0 002 4.06v11a.75.75 0 00.954.721A7.506 7.506 0 015 15.5c1.579 0 3.042.487 4.25 1.32V4.065z"/>
         </svg>
@@ -417,29 +716,27 @@
           class="absolute left-0 top-full mt-1 z-50 min-w-[380px] max-h-96 overflow-y-auto
                  bg-[var(--nc-surface-1)] border border-[var(--nc-border)] rounded shadow-xl"
         >
-          <div class="px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--nc-fg-4)]
-                      border-b border-[var(--nc-border)] sticky top-0 bg-[var(--nc-surface-1)]">
-            Filter presets — click to load into bar
-          </div>
-
-          <!-- Group by category using the comment structure -->
-          {#each PRESETS as preset}
-            <button
-              on:click={() => selectPreset(preset.filter)}
-              class="w-full text-left px-3 py-2 hover:bg-[var(--nc-surface-2)] transition-colors
-                     border-b border-[var(--nc-border-1)] last:border-b-0"
-            >
-              <div class="flex items-baseline justify-between gap-3">
-                <span class="text-xs font-medium text-[var(--nc-fg)] shrink-0">{preset.title}</span>
-                <span class="text-[10px] font-mono text-[var(--nc-fg-3)] truncate">{preset.filter}</span>
-              </div>
-            </button>
-          {/each}
+          {#if userPresets.length}
+            {#each userPresets as preset}
+              <button on:click={() => selectPreset(preset.filter)}
+                class="w-full text-left px-3 py-2 hover:bg-[var(--nc-surface-2)] transition-colors
+                       border-b border-[var(--nc-border-1)] last:border-b-0">
+                <div class="flex items-baseline justify-between gap-3">
+                  <span class="text-xs font-medium text-[var(--nc-fg)] shrink-0">{preset.title}</span>
+                  <span class="text-[10px] font-mono text-[var(--nc-fg-3)] truncate">{preset.filter}</span>
+                </div>
+              </button>
+            {/each}
+          {:else}
+            <div class="px-4 py-6 text-center text-[var(--nc-fg-5)] text-xs">
+              No presets — manage them in Settings.
+            </div>
+          {/if}
         </div>
       {/if}
     </div>
 
-    <!-- Filter input with history dropdown -->
+    <!-- Filter input with autocomplete -->
     <div class="relative flex-1">
       <input
         type="text"
@@ -473,7 +770,6 @@
                      {i === selectedIdx ? 'bg-[var(--nc-surface-2)]' : 'hover:bg-[var(--nc-surface-2)]'}"
             >
               {#if s.kind === 'history'}
-                <!-- clock icon -->
                 <svg class="w-3 h-3 shrink-0 text-[var(--nc-fg-4)]" viewBox="0 0 20 20" fill="currentColor">
                   <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 000-1.5h-3.25V5z" clip-rule="evenodd"/>
                 </svg>
@@ -511,3 +807,20 @@
   </div>
 
 </div>
+
+<!-- Modals -->
+{#if showAddressBook}
+  <AddressBookEditor
+    prefill={addressPrefill}
+    on:close={() => { showAddressBook = false; addressPrefill = '' }}
+  />
+{/if}
+
+{#if showPresetEditor}
+  <PresetEditor
+    userPresets={userPresets}
+    defaultPresets={BUILTIN_PRESETS}
+    on:save={(e) => { saveUserPresets(e.detail); showPresetEditor = false }}
+    on:close={() => showPresetEditor = false}
+  />
+{/if}

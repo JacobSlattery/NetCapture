@@ -33,6 +33,10 @@ Passing custom profiles and interpreters
             },
         ],
         extra_interpreters=[MyInterpreter()],
+        address_book=[
+            {"id": "1", "address": "192.168.1.100",      "name": "My Sensor",   "notes": "Living room"},
+            {"id": "2", "address": "192.168.1.100:9001",  "name": "Sensor Feed", "notes": "Port-specific name"},
+        ],
     ), prefix="/netcapture")
 
 Registering interpreters independently (before create_router is called)
