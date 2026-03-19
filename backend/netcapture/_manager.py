@@ -51,6 +51,9 @@ def _determine_mode(iface: str) -> str:
         NETCAPTURE_MODE=real     — require raw sockets (fails if no admin)
     Omit the variable (default) for automatic selection: scapy → real.
     """
+    if iface == "injected":
+        return "inject"
+
     import os
     forced = os.environ.get("NETCAPTURE_MODE", "").lower().strip()
 
@@ -146,7 +149,9 @@ class CaptureManager:
         self._running = True
         print(f"[capture] starting — mode={mode!r}  iface={iface!r}")
 
-        if mode == "scapy":
+        if mode == "inject":
+            self._task = asyncio.create_task(self._inject_loop())
+        elif mode == "scapy":
             scapy_iface = None if iface == "any" else iface
             self._task = asyncio.create_task(self._scapy_loop(scapy_iface))
         else:
@@ -246,6 +251,20 @@ class CaptureManager:
                 q.put_nowait(msg)
             except asyncio.QueueFull:
                 pass
+
+    async def _inject_loop(self) -> None:
+        """Stats ticker for inject mode — no capture, just emit stats every second."""
+        loop = asyncio.get_event_loop()
+        last_tick = loop.time()
+        try:
+            while self._running:
+                await asyncio.sleep(0.1)
+                now = loop.time()
+                if now - last_tick >= 1.0:
+                    self._emit_stats()
+                    last_tick = now
+        except asyncio.CancelledError:
+            pass
 
     async def _scapy_loop(self, iface: str | None) -> None:
         cap = ScapyCapture(iface, bpf_filter=self._bpf_filter)

@@ -207,7 +207,48 @@ app = FastAPI()
 app.include_router(create_router(), prefix="/netcapture")
 ```
 
-All NetCapture routes will be available under `/netcapture/api/...` and the WebSocket at `/netcapture/ws/capture`.
+All NetCapture routes will be available under `/netcapture/api/...`, the display WebSocket at `/netcapture/ws/capture`, and the injection WebSocket at `/netcapture/ws/inject`.
+
+#### Live Packet Injection
+
+Any external program can push packets into the live stream over a persistent WebSocket connection at `/ws/inject`. Every injected packet goes through the full pipeline — display-filter matching, protocol interpreter (NC-Frame, etc.), ID assignment, and live broadcast to all connected frontend clients.
+
+Connect to `ws://localhost:8000/ws/inject` (adjust prefix if embedded) and send JSON:
+
+```json
+// Single packet
+{
+  "src_ip":    "192.168.1.50",
+  "dst_ip":    "192.168.1.1",
+  "src_port":  9001,
+  "dst_port":  9001,
+  "protocol":  "UDP",
+  "length":    48,
+  "info":      "192.168.1.50:9001 → 192.168.1.1:9001",
+  "raw_hex":   "4500...",
+  "payload_hex": "4e430108..."
+}
+
+// Or a batch array for efficiency
+[{ ... }, { ... }]
+```
+
+The server responds to each message with `{"ok": true, "injected": N}` or `{"ok": false, "error": "..."}`.
+
+**Fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `protocol` | yes | e.g. `"UDP"`, `"TCP"`, `"NC-Frame"` |
+| `length` | yes | Wire length in bytes |
+| `src_ip`, `dst_ip` | recommended | Source / destination address |
+| `src_port`, `dst_port` | recommended | Port numbers |
+| `info` | recommended | One-line summary shown in the packet table |
+| `raw_hex` | recommended | Full packet as hex — enables the hex viewer and layer coloring |
+| `payload_hex` | optional | Application-layer bytes as hex, passed to interpreters (e.g. NC-Frame decoder) |
+| `abs_time`, `timestamp` | optional | Auto-generated from wall clock if omitted |
+
+This enables use cases like piping output from `tshark`, forwarding packets from a remote capture host, replaying a pcap at original timing, or any process that needs to push traffic into the viewer without going through the network stack.
 
 #### Custom Profiles
 

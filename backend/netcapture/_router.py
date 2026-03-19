@@ -28,6 +28,8 @@ import csv as _csv
 import io
 import json
 import socket as _dns_socket
+import time as _time
+from datetime import datetime as _datetime
 from typing import Sequence
 
 import psutil
@@ -35,7 +37,7 @@ from fastapi import APIRouter, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from ._manager import manager, reset_session_start
+from ._manager import manager, reset_session_start, _get_session_start
 from .interpreters import Interpreter, register
 
 
@@ -203,6 +205,7 @@ def create_router(
                     ifaces.append({"name": "loopback", "description": "Loopback  (127.0.0.1)", "ip": "127.0.0.1"})
             except ImportError:
                 pass
+        ifaces.append({"name": "injected", "description": "WS Inject  (/ws/inject)", "ip": None})
         return {"interfaces": ifaces}
 
     @router.get("/api/health")
@@ -353,6 +356,103 @@ def create_router(
         except Exception:
             pass
         return {"ip": ip, "hostname": None}
+
+    @router.websocket("/ws/inject")
+    async def ws_inject(websocket: WebSocket):
+        """
+        Inject packets from an external program into the live stream.
+
+        Each WebSocket message must be a JSON object (single packet) or a JSON
+        array (batch).  The server runs every packet through the full pipeline:
+        display-filter matching, protocol interpreter (NC-Frame, etc.), ID
+        assignment, stats counters, and live broadcast to all frontend clients.
+
+        Packet fields
+        -------------
+        Required:
+          protocol   str   e.g. "UDP", "TCP", "NC-Frame"
+          length     int   wire-length in bytes
+
+        Recommended:
+          src_ip     str   source address
+          dst_ip     str   destination address
+          src_port   int
+          dst_port   int
+          info       str   one-line summary shown in the packet table
+          raw_hex    str   full packet bytes as a hex string (enables hex viewer)
+
+        Optional (auto-generated if omitted):
+          abs_time   str   "HH:MM:SS.mmm"
+          timestamp  str   "MM:SS.mmm" relative to session start
+
+        Interpreter support:
+          payload_hex  str  hex string of the application-layer payload passed
+                            to registered interpreters (e.g. NC-Frame decoder).
+                            If omitted, no interpreter is attempted.
+
+        Responses
+        ---------
+        After each message the server sends:
+          {"ok": true,  "injected": N}   — N packets accepted and emitted
+          {"ok": false, "error": "..."}  — JSON parse failure
+        """
+        await websocket.accept()
+        try:
+            while True:
+                raw = await websocket.receive_text()
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError as exc:
+                    await websocket.send_text(json.dumps({"ok": False, "error": str(exc)}))
+                    continue
+
+                packets = data if isinstance(data, list) else [data]
+
+                now     = _datetime.now()
+                rel     = _time.time() - _get_session_start()
+                ts_str  = f"{int(rel // 60):02d}:{rel % 60:06.3f}"
+                abs_str = now.strftime("%H:%M:%S.") + f"{now.microsecond // 1000:03d}"
+
+                if not manager._running:
+                    await websocket.send_text(json.dumps({
+                        "ok": False,
+                        "discarded": len([p for p in packets if isinstance(p, dict)]),
+                        "error": "capture not running",
+                    }))
+                    continue
+
+                injected = 0
+                for pkt in packets:
+                    if not isinstance(pkt, dict):
+                        continue
+
+                    pkt.setdefault("abs_time",  abs_str)
+                    pkt.setdefault("timestamp", ts_str)
+                    pkt.setdefault("src_ip",    None)
+                    pkt.setdefault("dst_ip",    None)
+                    pkt.setdefault("src_port",  None)
+                    pkt.setdefault("dst_port",  None)
+                    pkt.setdefault("protocol",  "Unknown")
+                    pkt.setdefault("length",    0)
+                    pkt.setdefault("info",      "")
+                    pkt.setdefault("raw_hex",   "")
+                    pkt.setdefault("ttl",       None)
+                    pkt.setdefault("flags",     None)
+
+                    payload_hex = pkt.pop("payload_hex", None)
+                    if payload_hex:
+                        try:
+                            pkt["_payload"] = bytes.fromhex(payload_hex)
+                        except ValueError:
+                            pass
+
+                    manager._emit_packet(pkt)
+                    injected += 1
+
+                await websocket.send_text(json.dumps({"ok": True, "injected": injected}))
+
+        except (WebSocketDisconnect, RuntimeError):
+            pass
 
     @router.websocket("/ws/capture")
     async def ws_capture(websocket: WebSocket):
