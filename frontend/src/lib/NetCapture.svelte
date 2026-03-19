@@ -27,6 +27,18 @@
    */
   export let apiBase: string = ''
 
+  /**
+   * Color theme applied to the component wrapper.
+   * 'dark'  — dark surfaces (sets data-theme="dark" on the wrapper div)
+   * 'light' — light surfaces (default)
+   * ''      — inherits data-theme from an ancestor element
+   *
+   * In standalone mode the outer <html> element controls the theme;
+   * when embedded, pass this prop so the component manages its own theme
+   * without touching the parent page.
+   */
+  export let theme: 'light' | 'dark' | '' = ''
+
   let showCharts: boolean = localStorage.getItem('nc:showCharts') === 'true'
   let ChartsComponent: typeof import('./components/Charts.svelte').default | null = null
 
@@ -133,7 +145,10 @@
   // captureService owns the WS and all state at module scope.
 </script>
 
-<div class="flex flex-col h-screen overflow-hidden bg-[var(--nc-surface)]">
+<div
+  class="flex flex-col h-full overflow-hidden bg-[var(--nc-surface)]"
+  data-theme={theme || undefined}
+>
   <Toolbar
     on:start={() => startCapture($selectedInterface, $activeProfile?.filter ?? $captureFilter, $bpfFilter)}
     on:stop={stopCapture}

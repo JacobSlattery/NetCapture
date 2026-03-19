@@ -947,6 +947,7 @@
            rounded shadow-xl overflow-hidden"
     style="right:{window.innerWidth - exportMenuPos.x}px; top:{exportMenuPos.y}px"
     role="menu"
+    tabindex="-1"
     on:click|stopPropagation
     on:keydown|stopPropagation
   >
@@ -975,6 +976,7 @@
            rounded shadow-xl overflow-hidden"
     style="right:{window.innerWidth - importMenuPos.x}px; top:{importMenuPos.y}px"
     role="menu"
+    tabindex="-1"
     on:click|stopPropagation
     on:keydown|stopPropagation
   >

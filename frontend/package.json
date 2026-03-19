@@ -9,7 +9,9 @@
       "types": "./dist/index.d.ts",
       "svelte": "./src/lib/index.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./netcapture.css": "./src/lib/netcapture.css",
+    "./dist/netcapture.css": "./src/lib/netcapture.css"
   },
   "scripts": {
     "dev": "vite",

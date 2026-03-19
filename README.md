@@ -215,6 +215,23 @@ Both editors stay open until the user explicitly closes them with the **✕** bu
 
 NetCapture is a Python package (backend) and a Svelte component library (frontend) that can be mounted into any existing app.
 
+### Architecture overview
+
+```
+Your FastAPI app
+└── app.include_router(create_router(), prefix="/netcapture")
+        ├── /netcapture/api/...        REST endpoints
+        ├── /netcapture/ws/capture     live packet stream (display WebSocket)
+        └── /netcapture/ws/inject      packet injection (external programs)
+
+Your Svelte / SvelteKit app
+└── <NetCapture wsUrl="wss://host/netcapture/ws/capture" apiBase="/netcapture" />
+```
+
+The component is **a single-instance tool** — only one `<NetCapture>` should be mounted at a time. Svelte stores are module-level singletons so two simultaneous instances would share all state. In a multi-page SPA you can navigate away and back freely; state (packet buffer, selected packet, settings) persists in memory for the session.
+
+---
+
 ### Backend — Python / FastAPI
 
 Install the package:
@@ -402,36 +419,185 @@ Then run `pixi run mock-device --format nc-frame` and start capturing on the loo
 
 ### Frontend — Svelte Component
 
-Build the component library:
+#### 1. Install
+
+**Option A — local path install (recommended for monorepos):**
 ```bash
 cd frontend
-npm install
-npm run package          # outputs to frontend/dist/
+npm install              # install frontend deps first
+npm run package          # build the library → frontend/dist/
 ```
 
-Then install it in your Svelte app:
+Then in your app:
 ```bash
 npm install /path/to/netcapture/frontend
 ```
 
-Use the component, passing the URLs that match your backend prefix:
+**Option B — source import (SvelteKit / Vite apps in the same repo):**
+
+Skip `npm run package`. Point your app's `package.json` directly at the source:
+```json
+{
+  "dependencies": {
+    "netcapture": "file:../netcapture/frontend"
+  }
+}
+```
+Svelte-aware bundlers resolve the `"svelte"` export condition and use the raw `.svelte` sources, so your build pipeline processes them directly.
+
+---
+
+#### 2. CSS and theming
+
+Import the NetCapture stylesheet **once** in your app's global CSS or root layout. It provides all `--nc-*` CSS custom properties and the protocol row-tint classes:
+
+```js
+// In your app's entry point (e.g. main.ts / +layout.svelte)
+import 'netcapture/netcapture.css'
+```
+
+> **Tailwind users:** if your app uses Tailwind, also add NetCapture's component files to your `content` paths so Tailwind generates the utility classes they use:
+> ```js
+> // tailwind.config.js
+> export default {
+>   content: [
+>     './src/**/*.{svelte,ts}',
+>     './node_modules/netcapture/src/**/*.{svelte,ts}',
+>   ],
+> }
+> ```
+> If you installed via local path, adjust the path to point at the `frontend/src/` directory.
+
+**Dark theme:**
+
+The component reads the `[data-theme="dark"]` attribute. Pass the `theme` prop to scope it to the component wrapper (avoids touching the parent page):
+
 ```svelte
-<script>
+<NetCapture theme="dark" wsUrl="..." apiBase="..." />
+```
+
+Or apply it to an ancestor element in your own layout:
+
+```html
+<div data-theme="dark">
+  <NetCapture wsUrl="..." apiBase="..." />
+</div>
+```
+
+---
+
+#### 3. Container height
+
+The component fills `100%` of its parent's height (`h-full`). You must give the wrapping element an explicit height — otherwise it collapses to zero:
+
+```svelte
+<!-- Fixed height -->
+<div style="height: 700px;">
+  <NetCapture wsUrl="..." apiBase="..." />
+</div>
+
+<!-- Fill remaining viewport below a navbar -->
+<div style="height: calc(100vh - 64px);">
+  <NetCapture wsUrl="..." apiBase="..." />
+</div>
+
+<!-- SvelteKit full-page layout -->
+<main class="h-screen">
+  <NetCapture wsUrl="..." apiBase="..." />
+</main>
+```
+
+---
+
+#### 4. Usage
+
+```svelte
+<script lang="ts">
+  import { NetCapture } from 'netcapture'
+  import 'netcapture/netcapture.css'
+</script>
+
+<!-- Fill the remaining page height below a 64 px header -->
+<div style="height: calc(100vh - 64px);">
+  <NetCapture
+    wsUrl="wss://yourhost/netcapture/ws/capture"
+    apiBase="/netcapture"
+  />
+</div>
+```
+
+**SvelteKit example (`src/routes/capture/+page.svelte`):**
+
+```svelte
+<script lang="ts">
   import { NetCapture } from 'netcapture'
 </script>
 
-<NetCapture
-  wsUrl="wss://yourhost/netcapture/ws/capture"
-  apiBase="/netcapture"
-/>
+<svelte:head><title>NetCapture</title></svelte:head>
+
+<div class="h-[calc(100vh-4rem)]">
+  <NetCapture
+    wsUrl="wss://yourhost/netcapture/ws/capture"
+    apiBase="/netcapture"
+    theme="dark"
+  />
+</div>
 ```
+
+Import the CSS in your root layout instead of every page:
+
+```svelte
+<!-- src/routes/+layout.svelte -->
+<script>
+  import 'netcapture/netcapture.css'
+</script>
+
+<slot />
+```
+
+---
+
+#### Props
 
 | Prop | Type | Default | Description |
 |------|------|---------|-------------|
-| `wsUrl` | `string` | `''` | WebSocket URL. Empty = auto-detect from `window.location`. |
-| `apiBase` | `string` | `''` | Prefix for all API fetch calls. Empty = same origin. |
+| `wsUrl` | `string` | `''` | Full WebSocket URL. Empty = auto-detect from `window.location`. |
+| `apiBase` | `string` | `''` | Prefix for all REST fetch calls. Empty = same origin `/api/...`. |
+| `theme` | `'light' \| 'dark' \| ''` | `''` | Color theme. `''` inherits from an ancestor `[data-theme]` attribute. |
 
-When both are empty (standalone mode) the component connects to the same host it was served from, so no configuration is needed for the standalone case.
+When `wsUrl` and `apiBase` are both empty (standalone mode) the component connects to the same host it was served from.
+
+---
+
+#### TypeScript types
+
+Useful types are exported from the library entry point:
+
+```ts
+import type { Packet, NetworkInterface, CaptureProfile, DecodedFrame, Stats } from 'netcapture'
+```
+
+| Type | Description |
+|------|-------------|
+| `Packet` | A captured or injected packet |
+| `NetworkInterface` | `{ name, description? }` — interface dropdown entry |
+| `CaptureProfile` | Named capture preset passed to `create_router()` |
+| `AddressBookEntry` | `{ id, address, name, notes? }` |
+| `DecodedFrame` | Interpreter output: `{ interpreterName, fields, error? }` |
+| `DecodedField` | A single decoded field: `{ key, value, type }` |
+| `Stats` | Aggregate capture stats from the backend |
+| `CaptureMode` | `'idle' \| 'scapy' \| 'real' \| 'inject' \| 'error'` |
+| `ConnectionStatus` | `'disconnected' \| 'connecting' \| 'connected' \| 'error'` |
+
+---
+
+#### WebSocket lifecycle
+
+The WebSocket connection is managed at module scope by `captureService.ts`, not inside the component. This means:
+
+- The connection is established when the component first mounts and **persists when you navigate away** in an SPA.
+- If the component remounts (e.g. you navigate back), it reuses the existing connection without reconnecting.
+- Auto-reconnect with exponential back-off handles server restarts — no manual reconnection logic needed.
 
 ---
 

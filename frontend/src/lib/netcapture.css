@@ -1,0 +1,101 @@
+/*
+ * NetCapture — embeddable component stylesheet
+ *
+ * Import this file once in your app (alongside your own global CSS):
+ *
+ *   import 'netcapture/dist/netcapture.css'   // when using the built package
+ *   import 'netcapture/src/lib/netcapture.css' // when using the raw source
+ *
+ * The file provides:
+ *   1. CSS custom properties (--nc-*) used by every NetCapture component
+ *   2. Protocol row-tint utility classes (.nc-tint-*) used by the packet table
+ *   3. Optional dark theme via [data-theme="dark"] or the `theme` prop
+ *
+ * NOTE: This file does NOT include Tailwind directives, font imports, or
+ * global html/body resets — those live in the standalone app.css.
+ */
+
+/* ── Light theme (default) ───────────────────────────────────────────────── */
+:root,
+[data-theme="light"] {
+  /* Surfaces */
+  --nc-surface:   #ffffff;
+  --nc-surface-1: #f6f8fa;
+  --nc-surface-2: #eaeef2;
+  /* Borders */
+  --nc-border:   #d0d7de;
+  --nc-border-1: #c8cdd3;
+  --nc-border-2: #bcc3ca;
+  /* Foreground */
+  --nc-fg:   #1f2328;
+  --nc-fg-1: #2d3a4a;
+  --nc-fg-2: #4b5563;
+  --nc-fg-3: #57606a;
+  --nc-fg-4: #6e7781;
+  --nc-fg-5: #7a8694;
+  /* Protocol tree section labels */
+  --nc-proto-eth:     #1d4ed8;
+  --nc-proto-ip:      #15803d;
+  --nc-proto-trans:   #b45309;
+  --nc-proto-payload: #7e22ce;
+  /* Row hover tint */
+  --nc-row-hover: rgb(96 165 250 / 0.22);
+  /* Protocol palette */
+  --nc-p-tcp:     #3b82f6;
+  --nc-p-udp:     #10b981;
+  --nc-p-dns:     #8b5cf6;
+  --nc-p-icmp:    #f59e0b;
+  --nc-p-http:    #f97316;
+  --nc-p-https:   #06b6d4;
+  --nc-p-arp:     #ec4899;
+  --nc-p-default: #6b7280;
+  /* Protocol row tints (20 % opacity) */
+  --nc-p-tcp-tint:   rgba(59,  130, 246, 0.20);
+  --nc-p-udp-tint:   rgba(16,  185, 129, 0.20);
+  --nc-p-dns-tint:   rgba(139, 92,  246, 0.20);
+  --nc-p-icmp-tint:  rgba(245, 158, 11,  0.20);
+  --nc-p-http-tint:  rgba(249, 115, 22,  0.20);
+  --nc-p-https-tint: rgba(6,   182, 212, 0.20);
+  --nc-p-arp-tint:   rgba(236, 72,  153, 0.20);
+  /* Status / connection indicator colours */
+  --nc-status-ok:   #16a34a;
+  --nc-status-warn: #b45309;
+  --nc-status-err:  #dc2626;
+  --nc-status-off:  #4b5563;
+}
+
+/* ── Dark theme ──────────────────────────────────────────────────────────── */
+[data-theme="dark"] {
+  --nc-surface:   #0d1117;
+  --nc-surface-1: #161b22;
+  --nc-surface-2: #21262d;
+  --nc-border:   #30363d;
+  --nc-border-1: #1c2128;
+  --nc-border-2: #2d333b;
+  --nc-fg:   #e6edf3;
+  --nc-fg-1: #c9d1d9;
+  --nc-fg-2: #8b949e;
+  --nc-fg-3: #6e7681;
+  --nc-fg-4: #484f58;
+  --nc-fg-5: #30363d;
+  --nc-proto-eth:     #93c5fd;
+  --nc-proto-ip:      #86efac;
+  --nc-proto-trans:   #fcd34d;
+  --nc-proto-payload: #d8b4fe;
+  --nc-row-hover: rgb(96 165 250 / 0.30);
+  --nc-status-ok:   #4ade80;
+  --nc-status-warn: #facc15;
+  --nc-status-err:  #f87171;
+  --nc-status-off:  #6b7280;
+}
+
+/* ── Protocol row-tint utility classes ───────────────────────────────────── */
+/* Used by PacketTable — add this file to your Tailwind content paths or     */
+/* import it here so these classes are available to the bundle.              */
+.nc-tint-tcp   { background-color: var(--nc-p-tcp-tint);   }
+.nc-tint-udp   { background-color: var(--nc-p-udp-tint);   }
+.nc-tint-dns   { background-color: var(--nc-p-dns-tint);   }
+.nc-tint-icmp  { background-color: var(--nc-p-icmp-tint);  }
+.nc-tint-http  { background-color: var(--nc-p-http-tint);  }
+.nc-tint-https { background-color: var(--nc-p-https-tint); }
+.nc-tint-arp   { background-color: var(--nc-p-arp-tint);   }
