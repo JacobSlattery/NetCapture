@@ -40,6 +40,22 @@
   // ── Recording submenu state ────────────────────────────────────────────────
   let exportOpen = false
   let importOpen = false
+  let exportMenuPos = { x: 0, y: 0 }
+  let importMenuPos = { x: 0, y: 0 }
+
+  function openExportMenu(e: MouseEvent): void {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    exportMenuPos = { x: rect.left, y: rect.top }
+    exportOpen = !exportOpen
+    importOpen = false
+  }
+
+  function openImportMenu(e: MouseEvent): void {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    importMenuPos = { x: rect.left, y: rect.top }
+    importOpen = !importOpen
+    exportOpen = false
+  }
 
   async function handleCaptureImport(e: Event): Promise<void> {
     const file = (e.target as HTMLInputElement).files?.[0]
@@ -358,7 +374,7 @@
     protocol: 'bg-green-900/40           text-green-300',
   }
 
-  function closeDropdowns(): void { showPresets = false; showSettings = false; showBpfPresets = false; focused = false }
+  function closeDropdowns(): void { showPresets = false; showSettings = false; showBpfPresets = false; exportOpen = false; importOpen = false; focused = false }
 
   function applyFilter(): void {
     if (!filterResult.valid) return
@@ -567,67 +583,35 @@
             Recording
           </div>
           <!-- Export group -->
-          <button on:click={() => { exportOpen = !exportOpen; importOpen = false }}
-            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+          <button on:click={openExportMenu}
+            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs transition-colors
+                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)]
+                   {exportOpen ? 'bg-[var(--nc-surface-2)] text-[var(--nc-fg)]' : ''}">
             <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/>
               <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
             </svg>
             Export
-            <svg class="w-3 h-3 ml-auto transition-transform {exportOpen ? 'rotate-90' : ''}" viewBox="0 0 20 20" fill="currentColor">
+            <svg class="w-3 h-3 ml-auto" viewBox="0 0 20 20" fill="currentColor">
               <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
             </svg>
           </button>
-          {#if exportOpen}
-            <button on:click={() => { exportPcap(); showSettings = false }}
-              class="w-full text-left flex items-center gap-2 pl-8 pr-3 py-1.5 text-xs
-                     text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
-              PCAP
-            </button>
-            <button on:click={() => { handleCsvExport() }}
-              class="w-full text-left flex items-center gap-2 pl-8 pr-3 py-1.5 text-xs
-                     text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
-              CSV
-            </button>
-            <button on:click={() => { exportCapture(); showSettings = false }}
-              class="w-full text-left flex items-center gap-2 pl-8 pr-3 py-1.5 text-xs
-                     text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
-              Capture (JSON)
-            </button>
-          {/if}
 
           <!-- Import group -->
-          <button on:click={() => { importOpen = !importOpen; exportOpen = false }} disabled={$isCapturing}
-            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors
-                   disabled:opacity-40 disabled:cursor-not-allowed">
+          <button on:click={openImportMenu} disabled={$isCapturing}
+            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs transition-colors
+                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)]
+                   disabled:opacity-40 disabled:cursor-not-allowed
+                   {importOpen ? 'bg-[var(--nc-surface-2)] text-[var(--nc-fg)]' : ''}">
             <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path d="M9.25 13.25a.75.75 0 001.5 0V4.636l2.955 3.129a.75.75 0 001.09-1.03l-4.25-4.5a.75.75 0 00-1.09 0l-4.25 4.5a.75.75 0 101.09 1.03L9.25 4.636v8.614z"/>
               <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
             </svg>
             Import
-            <svg class="w-3 h-3 ml-auto transition-transform {importOpen ? 'rotate-90' : ''}" viewBox="0 0 20 20" fill="currentColor">
+            <svg class="w-3 h-3 ml-auto" viewBox="0 0 20 20" fill="currentColor">
               <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
             </svg>
           </button>
-          {#if importOpen}
-            <button on:click={() => { pcapFileInput.click(); showSettings = false }}
-              class="w-full text-left flex items-center gap-2 pl-8 pr-3 py-1.5 text-xs
-                     text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
-              PCAP
-            </button>
-            <button on:click={() => { csvFileInput.click(); showSettings = false }}
-              class="w-full text-left flex items-center gap-2 pl-8 pr-3 py-1.5 text-xs
-                     text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
-              CSV
-            </button>
-            <button on:click={() => { captureFileInput.click(); showSettings = false }}
-              class="w-full text-left flex items-center gap-2 pl-8 pr-3 py-1.5 text-xs
-                     text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
-              Capture (JSON)
-            </button>
-          {/if}
 
           <!-- ── Addresses ──────────────────────────────────────────────── -->
           <div class="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider
@@ -954,4 +938,60 @@
     on:save={(e) => { saveUserPresets(e.detail); showPresetEditor = false }}
     on:close={() => showPresetEditor = false}
   />
+{/if}
+
+<!-- ── Export flyout submenu (fixed, escapes overflow-y-auto of settings panel) -->
+{#if exportOpen}
+  <div
+    class="fixed z-[200] min-w-[9rem] bg-[var(--nc-surface-1)] border border-[var(--nc-border)]
+           rounded shadow-xl overflow-hidden"
+    style="right:{window.innerWidth - exportMenuPos.x}px; top:{exportMenuPos.y}px"
+    role="menu"
+    on:click|stopPropagation
+    on:keydown|stopPropagation
+  >
+    <button on:click={() => { exportPcap(); exportOpen = false; showSettings = false }}
+      class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+             text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+      PCAP
+    </button>
+    <button on:click={() => { handleCsvExport(); exportOpen = false; showSettings = false }}
+      class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+             text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+      CSV
+    </button>
+    <button on:click={() => { exportCapture(); exportOpen = false; showSettings = false }}
+      class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+             text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+      Capture (JSON)
+    </button>
+  </div>
+{/if}
+
+<!-- ── Import flyout submenu -->
+{#if importOpen}
+  <div
+    class="fixed z-[200] min-w-[9rem] bg-[var(--nc-surface-1)] border border-[var(--nc-border)]
+           rounded shadow-xl overflow-hidden"
+    style="right:{window.innerWidth - importMenuPos.x}px; top:{importMenuPos.y}px"
+    role="menu"
+    on:click|stopPropagation
+    on:keydown|stopPropagation
+  >
+    <button on:click={() => { pcapFileInput.click(); importOpen = false; showSettings = false }}
+      class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+             text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+      PCAP
+    </button>
+    <button on:click={() => { csvFileInput.click(); importOpen = false; showSettings = false }}
+      class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+             text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+      CSV
+    </button>
+    <button on:click={() => { captureFileInput.click(); importOpen = false; showSettings = false }}
+      class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+             text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+      Capture (JSON)
+    </button>
+  </div>
 {/if}
