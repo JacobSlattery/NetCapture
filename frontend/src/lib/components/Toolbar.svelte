@@ -1,14 +1,15 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte'
+  import { createEventDispatcher, tick } from 'svelte'
   import {
     isCapturing, connectionStatus, selectedInterface,
     interfaces, captureFilter, captureMode, profiles, activeProfile, packets,
     addressBook, addressBookPrefill, timestampMode,
     autoScrollEnabled, maxPackets, capturePacketLimit, ringBuffer, columnVisibility,
+    bpfFilter, filterFocusTick, filteredPackets, dnsCache, npcapAvailable,
   } from '../stores'
   import type { CaptureProfile, DecodedValue, AddressBookEntry } from '../types'
   import type { ColumnVisibility } from '../stores'
-  import { exportCapture, importCapture, saveAddressBook } from '../captureService'
+  import { exportCapture, importCapture, saveAddressBook, exportPcap, importPcap, exportCsv, importCsv } from '../captureService'
   import { parseFilter, tokenize, KNOWN_FIELDS } from '../filter'
   import AddressBookEditor from './AddressBookEditor.svelte'
   import PresetEditor from './PresetEditor.svelte'
@@ -33,12 +34,36 @@
   let captureFileInput:  HTMLInputElement
   let addrBookFileInput: HTMLInputElement
   let presetFileInput:   HTMLInputElement
+  let pcapFileInput:     HTMLInputElement
+  let csvFileInput:      HTMLInputElement
+
+  // ── Recording submenu state ────────────────────────────────────────────────
+  let exportOpen = false
+  let importOpen = false
 
   async function handleCaptureImport(e: Event): Promise<void> {
     const file = (e.target as HTMLInputElement).files?.[0]
     if (!file) return
     try { await importCapture(file) } catch (err) { console.error('[import]', err) }
     finally { captureFileInput.value = '' }
+  }
+
+  function handlePcapImport(e: Event) {
+    const file = (e.target as HTMLInputElement).files?.[0]
+    if (file) { importPcap(file).catch(console.error); (e.target as HTMLInputElement).value = '' }
+    showSettings = false
+  }
+
+  function handleCsvImport(e: Event) {
+    const file = (e.target as HTMLInputElement).files?.[0]
+    if (file) { importCsv(file).catch(console.error); (e.target as HTMLInputElement).value = '' }
+    showSettings = false
+  }
+
+  function handleCsvExport() {
+    const cache = new Map(Object.entries($dnsCache))
+    exportCsv($filteredPackets, $columnVisibility, $timestampMode, cache)
+    showSettings = false
   }
 
   function exportAddrBook(): void {
@@ -99,12 +124,28 @@
       const id   = val.slice('profile:'.length)
       const prof = $profiles.find((p: CaptureProfile) => p.id === id) ?? null
       activeProfile.set(prof)
-      if (prof) selectedInterface.set(prof.interface)
+      if (prof) {
+        selectedInterface.set(prof.interface)
+        if ($npcapAvailable && prof.bpf_filter != null) bpfFilter.set(prof.bpf_filter)
+      }
     } else {
       activeProfile.set(null)
       selectedInterface.set(val.slice('iface:'.length))
     }
   }
+
+  // ── BPF presets ────────────────────────────────────────────────────────────
+  let showBpfPresets = false
+  const BPF_PRESETS = [
+    { label: 'TCP only',          value: 'tcp' },
+    { label: 'UDP only',          value: 'udp' },
+    { label: 'ICMP only',         value: 'icmp' },
+    { label: 'DNS  (port 53)',    value: 'port 53' },
+    { label: 'HTTP  (port 80)',   value: 'port 80' },
+    { label: 'HTTPS  (port 443)', value: 'tcp port 443' },
+    { label: 'TCP + HTTPS',       value: 'tcp and port 443' },
+    { label: 'Specific host',     value: 'host 192.168.1.1' },
+  ]
 
   // ── Status / mode display ──────────────────────────────────────────────────
 
@@ -291,6 +332,9 @@
 
   // ── Filter bar state ───────────────────────────────────────────────────────
 
+  let filterInputEl: HTMLInputElement
+  $: if ($filterFocusTick) { tick().then(() => { filterInputEl?.focus(); filterInputEl?.select() }) }
+
   let pendingFilter = $captureFilter
   let focused       = false
   let selectedIdx   = -1
@@ -314,7 +358,7 @@
     protocol: 'bg-green-900/40           text-green-300',
   }
 
-  function closeDropdowns(): void { showPresets = false; showSettings = false; focused = false }
+  function closeDropdowns(): void { showPresets = false; showSettings = false; showBpfPresets = false; focused = false }
 
   function applyFilter(): void {
     if (!filterResult.valid) return
@@ -385,6 +429,8 @@
 <input bind:this={captureFileInput}  type="file" accept=".json" class="hidden" on:change={handleCaptureImport} />
 <input bind:this={addrBookFileInput} type="file" accept=".json" class="hidden" on:change={handleAddrBookImport} />
 <input bind:this={presetFileInput}   type="file" accept=".json" class="hidden" on:change={handlePresetImport} />
+<input bind:this={pcapFileInput}     type="file" accept=".pcap,.pcapng" class="hidden" on:change={handlePcapImport} />
+<input bind:this={csvFileInput}      type="file" accept=".csv"           class="hidden" on:change={handleCsvImport} />
 
 <div class="flex flex-col bg-[var(--nc-surface-1)] border-b border-[var(--nc-border)] select-none shrink-0">
 
@@ -417,6 +463,46 @@
         </optgroup>
       {/if}
     </select>
+
+    {#if $npcapAvailable}
+      <div class="relative flex items-center">
+        <input
+          bind:value={$bpfFilter}
+          disabled={$isCapturing}
+          placeholder="BPF filter (e.g. tcp port 443)"
+          title="Kernel-level BPF capture filter. Filters packets before they reach the app."
+          class="bg-[var(--nc-surface)] text-[var(--nc-fg-1)] border border-[var(--nc-border)] rounded-l px-2 py-1 text-xs
+                 w-64 focus:outline-none focus:border-blue-500 disabled:opacity-40 font-mono"
+        />
+        <!-- BPF presets button -->
+        <button
+          on:click|stopPropagation={() => { showBpfPresets = !showBpfPresets }}
+          disabled={$isCapturing}
+          title="BPF filter presets"
+          class="flex items-center px-1.5 py-1 border border-l-0 border-[var(--nc-border)] rounded-r
+                 bg-[var(--nc-surface)] hover:bg-[var(--nc-surface-2)] text-[var(--nc-fg-3)]
+                 hover:text-[var(--nc-fg-1)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+          <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd"/>
+          </svg>
+        </button>
+        {#if showBpfPresets}
+          <div class="absolute top-full left-0 mt-1 z-50 min-w-[200px]
+                      bg-[var(--nc-surface-1)] border border-[var(--nc-border)] rounded shadow-lg py-1"
+               on:click|stopPropagation on:keydown|stopPropagation role="none">
+            {#each BPF_PRESETS as preset}
+              <button
+                on:click={() => { bpfFilter.set(preset.value); showBpfPresets = false }}
+                class="w-full text-left px-3 py-1.5 text-xs flex items-center justify-between gap-4
+                       text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+                <span>{preset.label}</span>
+                <span class="font-mono text-[var(--nc-fg-4)] text-[10px]">{preset.value}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
 
     {#if !$isCapturing}
       <button on:click={() => dispatch('start')}
@@ -480,16 +566,39 @@
                       text-[var(--nc-fg-4)] border-b border-[var(--nc-border-1)]">
             Recording
           </div>
-          <button on:click={() => { exportCapture(); showSettings = false }}
+          <!-- Export group -->
+          <button on:click={() => { exportOpen = !exportOpen; importOpen = false }}
             class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
                    text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
             <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/>
               <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
             </svg>
-            Export Capture
+            Export
+            <svg class="w-3 h-3 ml-auto transition-transform {exportOpen ? 'rotate-90' : ''}" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
+            </svg>
           </button>
-          <button on:click={() => { captureFileInput.click(); showSettings = false }} disabled={$isCapturing}
+          {#if exportOpen}
+            <button on:click={() => { exportPcap(); showSettings = false }}
+              class="w-full text-left flex items-center gap-2 pl-8 pr-3 py-1.5 text-xs
+                     text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+              PCAP
+            </button>
+            <button on:click={() => { handleCsvExport() }}
+              class="w-full text-left flex items-center gap-2 pl-8 pr-3 py-1.5 text-xs
+                     text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+              CSV
+            </button>
+            <button on:click={() => { exportCapture(); showSettings = false }}
+              class="w-full text-left flex items-center gap-2 pl-8 pr-3 py-1.5 text-xs
+                     text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+              Capture (JSON)
+            </button>
+          {/if}
+
+          <!-- Import group -->
+          <button on:click={() => { importOpen = !importOpen; exportOpen = false }} disabled={$isCapturing}
             class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
                    text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors
                    disabled:opacity-40 disabled:cursor-not-allowed">
@@ -497,8 +606,28 @@
               <path d="M9.25 13.25a.75.75 0 001.5 0V4.636l2.955 3.129a.75.75 0 001.09-1.03l-4.25-4.5a.75.75 0 00-1.09 0l-4.25 4.5a.75.75 0 101.09 1.03L9.25 4.636v8.614z"/>
               <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
             </svg>
-            Import Capture
+            Import
+            <svg class="w-3 h-3 ml-auto transition-transform {importOpen ? 'rotate-90' : ''}" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
+            </svg>
           </button>
+          {#if importOpen}
+            <button on:click={() => { pcapFileInput.click(); showSettings = false }}
+              class="w-full text-left flex items-center gap-2 pl-8 pr-3 py-1.5 text-xs
+                     text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+              PCAP
+            </button>
+            <button on:click={() => { csvFileInput.click(); showSettings = false }}
+              class="w-full text-left flex items-center gap-2 pl-8 pr-3 py-1.5 text-xs
+                     text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+              CSV
+            </button>
+            <button on:click={() => { captureFileInput.click(); showSettings = false }}
+              class="w-full text-left flex items-center gap-2 pl-8 pr-3 py-1.5 text-xs
+                     text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+              Capture (JSON)
+            </button>
+          {/if}
 
           <!-- ── Addresses ──────────────────────────────────────────────── -->
           <div class="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider
@@ -740,6 +869,7 @@
     <div class="relative flex-1">
       <input
         type="text"
+        bind:this={filterInputEl}
         bind:value={pendingFilter}
         on:keydown={handleKeydown}
         on:focus={() => { focused = true; selectedIdx = -1 }}
@@ -749,6 +879,7 @@
         autocomplete="off"
         autocorrect="off"
         autocapitalize="off"
+        data-filter-input="true"
         placeholder="Apply display filter  —  ip.src == 1.2.3.4  ||  port == 9001  &&  not arp"
         class="w-full bg-[var(--nc-surface)] text-[var(--nc-fg)] rounded px-3 py-1 text-xs
                border focus:outline-none placeholder-[var(--nc-fg-4)] transition-colors font-mono"

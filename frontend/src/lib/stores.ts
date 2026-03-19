@@ -18,6 +18,9 @@ export const isCapturing = writable<boolean>(false)
 // Active capture mode reported by backend
 export const captureMode = writable<CaptureMode>('idle')
 
+// Whether the backend has Npcap available (probed on startup)
+export const npcapAvailable = writable<boolean>(false)
+
 // WebSocket / connection state
 export const connectionStatus = writable<ConnectionStatus>('disconnected')
 
@@ -70,7 +73,7 @@ autoScrollEnabled.subscribe(v => localStorage.setItem('nc:autoScroll', String(v)
 
 // Max packets kept in the rolling buffer
 export const maxPackets = writable<number>(
-  Math.max(100, Number(localStorage.getItem('nc:maxPackets') || 10000))
+  Math.max(100, Number(localStorage.getItem('nc:maxPackets') || 100000))
 )
 maxPackets.subscribe(v => localStorage.setItem('nc:maxPackets', String(v)))
 
@@ -129,3 +132,21 @@ export const filteredPackets = derived(
     return $packets.filter(p => matchesFilter(p, result))
   }
 )
+
+// DNS reverse-lookup cache: ip → hostname (null = looked up but no result)
+export const dnsCache = writable<Record<string, string | null>>({})
+
+// BPF kernel-level capture filter (persisted)
+export const bpfFilter = writable<string>(
+  localStorage.getItem('nc:bpfFilter') ?? ''
+)
+bpfFilter.subscribe(v => { if (v) localStorage.setItem('nc:bpfFilter', v); else localStorage.removeItem('nc:bpfFilter') })
+
+// Signal to focus the filter input (increment to trigger)
+export const filterFocusTick = writable<number>(0)
+
+// Signal to scroll PacketTable to the selected packet
+export const scrollToSelectedTick = writable<number>(0)
+
+// Follow stream: packet to anchor the stream view on
+export const followStreamPacket = writable<Packet | null>(null)

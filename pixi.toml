@@ -43,7 +43,7 @@ test = { cmd = "python -m pytest tests/ -v", description = "Run capture parsing 
 
 # UDP mock device (no admin rights needed)
 # Default mode is 'feed' — sends directly to backend sink on port 9001
-mock-device = { cmd = "python tools/udp_device.py", description = "Run mock UDP device (--mode feed|chat|sender|receiver|echo)" }
+mock-device = { cmd = "python tools/udp_device.py", description = "Mock UDP device — add --format nc-frame for decoded packets (--mode feed|chat|sender|receiver|echo)" }
 
 # Production: build frontend then serve everything from FastAPI
 serve = { cmd = "python backend/server.py", depends-on = ["build-ui"], description = "Build + serve on :8000" }

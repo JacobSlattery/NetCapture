@@ -1,11 +1,17 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
-  import { interfaces, selectedInterface, captureFilter, profiles, activeProfile, addressBook } from './stores'
-  import { initCaptureService, startCapture, stopCapture, clearCapture, fetchInterfaces, fetchProfiles, fetchAddressBook } from './captureService'
+  import { onMount, onDestroy } from 'svelte'
+  import { get } from 'svelte/store'
+  import {
+    interfaces, selectedInterface, captureFilter, profiles, activeProfile, addressBook,
+    isCapturing, selectedPacket, filteredPackets, filterFocusTick, scrollToSelectedTick,
+    bpfFilter, followStreamPacket,
+  } from './stores'
+  import { initCaptureService, startCapture, stopCapture, clearCapture, fetchInterfaces, fetchProfiles, fetchAddressBook, exportCapture, fetchCapabilities } from './captureService'
   import Toolbar      from './components/Toolbar.svelte'
   import StatsBar     from './components/StatsBar.svelte'
   import PacketTable  from './components/PacketTable.svelte'
   import PacketDetail from './components/PacketDetail.svelte'
+  import FollowStream from './components/FollowStream.svelte'
 
   /**
    * Full WebSocket URL to the NetCapture backend.
@@ -38,14 +44,69 @@
     localStorage.setItem('nc:showCharts', 'false')
   }
 
+  function handleKeydown(e: KeyboardEvent) {
+    const tag = (e.target as HTMLElement).tagName
+    const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+
+    // Space = toggle capture (not in input)
+    if (e.code === 'Space' && !inInput) {
+      e.preventDefault()
+      if (get(isCapturing)) stopCapture()
+      else startCapture(get(selectedInterface), get(activeProfile)?.filter ?? get(captureFilter), get(bpfFilter))
+      return
+    }
+
+    // Ctrl+E = export JSON capture
+    if (e.key === 'e' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault()
+      exportCapture()
+      return
+    }
+
+    // F = focus filter (not in input)
+    if (e.key === 'f' && !inInput) {
+      e.preventDefault()
+      filterFocusTick.update(n => n + 1)
+      return
+    }
+
+    // Escape = clear filter if filter focused, else deselect packet
+    if (e.key === 'Escape') {
+      if (document.activeElement?.closest('[data-filter-input]')) {
+        captureFilter.set('')
+        ;(document.activeElement as HTMLElement).blur()
+      } else {
+        selectedPacket.set(null)
+      }
+      return
+    }
+
+    // J = next packet, K = prev packet (not in input)
+    if ((e.key === 'j' || e.key === 'k') && !inInput) {
+      e.preventDefault()
+      const pkts = get(filteredPackets)
+      if (!pkts.length) return
+      const cur  = get(selectedPacket)
+      const idx  = cur ? pkts.findIndex(p => p.id === cur.id) : -1
+      let next: number
+      if (e.key === 'j') next = idx < 0 ? 0 : Math.min(idx + 1, pkts.length - 1)
+      else               next = idx < 0 ? pkts.length - 1 : Math.max(idx - 1, 0)
+      selectedPacket.set(pkts[next])
+      scrollToSelectedTick.update(n => n + 1)
+      return
+    }
+  }
+
   onMount(async () => {
     // Connect the WebSocket — must be called before any captures start
     initCaptureService(wsUrl, apiBase)
 
+    window.addEventListener('keydown', handleKeydown)
+
     const savedIfaceName = localStorage.getItem('nc:selectedInterface') ?? ''
     const savedProfileId = localStorage.getItem('nc:activeProfileId')
 
-    const [ifaces, profs, book] = await Promise.all([fetchInterfaces(), fetchProfiles(), fetchAddressBook()])
+    const [ifaces, profs, book] = await Promise.all([fetchInterfaces(), fetchProfiles(), fetchAddressBook(), fetchCapabilities()])
     if (ifaces.length) interfaces.set(ifaces)
     profiles.set(profs)
     addressBook.set(book)
@@ -65,13 +126,16 @@
     }
   })
 
-  // No onDestroy — capture persists when this component unmounts.
+  onDestroy(() => {
+    window.removeEventListener('keydown', handleKeydown)
+  })
+  // Note: capture persists when this component unmounts.
   // captureService owns the WS and all state at module scope.
 </script>
 
 <div class="flex flex-col h-screen overflow-hidden bg-[var(--nc-surface)]">
   <Toolbar
-    on:start={() => startCapture($selectedInterface, $activeProfile?.filter ?? $captureFilter)}
+    on:start={() => startCapture($selectedInterface, $activeProfile?.filter ?? $captureFilter, $bpfFilter)}
     on:stop={stopCapture}
     on:clear={clearCapture}
   />
@@ -92,3 +156,7 @@
   <PacketTable />
   <PacketDetail />
 </div>
+
+{#if $followStreamPacket}
+  <FollowStream anchor={$followStreamPacket} on:close={() => followStreamPacket.set(null)} />
+{/if}

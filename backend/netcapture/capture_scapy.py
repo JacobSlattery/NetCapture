@@ -45,7 +45,7 @@ except ImportError:
 
 # ── Helpers shared with capture.py ────────────────────────────────────────────
 
-from .capture import _PORT_LABEL, _label, _tcp_flags
+from .capture import _PORT_LABEL, _label, _tcp_flags, _tcp_label
 
 
 # ── Npcap probe ───────────────────────────────────────────────────────────────
@@ -64,17 +64,47 @@ def probe_npcap() -> bool:
         return False
 
 
+def _resolve_loopback() -> str:
+    """
+    Return the Npcap loopback interface name for use with scapy.
+    Searches conf.ifaces for the interface whose IP is 127.0.0.1.
+    Falls back to the standard Npcap device name if not found.
+    """
+    try:
+        from scapy.all import conf as _conf
+        for iface in _conf.ifaces.values():
+            ip = getattr(iface, "ip", None)
+            if ip == "127.0.0.1":
+                return iface.name
+    except Exception:
+        pass
+    return r"\Device\NPF_Loopback"
+
+
 # ── Packet parser ─────────────────────────────────────────────────────────────
 
 def _parse_scapy(pkt, start_time: float, seq: int) -> dict | None:  # type: ignore[no-untyped-def]
     """Convert a scapy packet object to the frontend-compatible dict format."""
     try:
-        raw_bytes = bytes(pkt)
+        full_bytes = bytes(pkt)
     except Exception:
         return None
 
+    # For non-Ethernet links (loopback DLT_NULL, etc.) the frame starts with
+    # a link-layer header the frontend hex viewer doesn't know about.  Strip
+    # down to the IP layer so the viewer sees a raw-IP packet (first nibble
+    # 4 or 6), which it already handles correctly.
+    if pkt.haslayer(Ether):
+        raw_bytes = full_bytes
+    elif pkt.haslayer(IP):
+        raw_bytes = bytes(pkt[IP])
+    elif pkt.haslayer(IPv6):
+        raw_bytes = bytes(pkt[IPv6])
+    else:
+        raw_bytes = full_bytes
+
     raw_hex = raw_bytes.hex()
-    length  = len(raw_bytes)
+    length  = len(full_bytes)  # report true wire length, not stripped length
 
     now = datetime.now()
     rel = time.time() - start_time
@@ -108,8 +138,13 @@ def _parse_scapy(pkt, start_time: float, seq: int) -> dict | None:  # type: igno
             src_port = tcp.sport
             dst_port = tcp.dport
             flags    = _tcp_flags(int(tcp.flags))
-            payload  = bytes(tcp.payload) if tcp.payload else b""
-            protocol = _label("TCP", src_port, dst_port)
+            # Extract payload directly from raw IP bytes (skip IP header + TCP data offset)
+            _ip_bytes = bytes(pkt[IP])
+            _ihl = (_ip_bytes[0] & 0x0F) * 4
+            _tcp_bytes = _ip_bytes[_ihl:]
+            _tcp_data_off = ((_tcp_bytes[12] >> 4) * 4) if len(_tcp_bytes) >= 13 else 20
+            payload  = _tcp_bytes[_tcp_data_off:] if len(_tcp_bytes) > _tcp_data_off else b""
+            protocol = _tcp_label(src_port, dst_port, payload)
             info = (
                 f"[{flags}] {src_ip}:{src_port} → {dst_ip}:{dst_port}  "
                 f"Seq={tcp.seq}  Len={len(payload)}"
@@ -119,8 +154,11 @@ def _parse_scapy(pkt, start_time: float, seq: int) -> dict | None:  # type: igno
             udp      = pkt[UDP]
             src_port = udp.sport
             dst_port = udp.dport
-            payload  = bytes(udp.payload) if udp.payload else b""
-            protocol = _label("UDP", src_port, dst_port)
+            # Extract payload directly from raw IP bytes (skip IP header + 8-byte UDP header)
+            _ip_bytes = bytes(pkt[IP])
+            _ihl = (_ip_bytes[0] & 0x0F) * 4
+            payload = _ip_bytes[_ihl + 8:] if len(_ip_bytes) > _ihl + 8 else b""
+            protocol = _label("UDP", src_port, dst_port) if payload else "UDP"
             info = (
                 f"{src_ip}:{src_port} → {dst_ip}:{dst_port}  "
                 f"Len={max(0, (udp.len or 8) - 8)}"
@@ -146,8 +184,34 @@ def _parse_scapy(pkt, start_time: float, seq: int) -> dict | None:  # type: igno
         ip6      = pkt[IPv6]
         src_ip   = ip6.src
         dst_ip   = ip6.dst
-        protocol = "IPv6"
-        info     = f"{src_ip} → {dst_ip}"
+
+        if pkt.haslayer(TCP):
+            tcp      = pkt[TCP]
+            src_port = tcp.sport
+            dst_port = tcp.dport
+            flags    = _tcp_flags(int(tcp.flags))
+            payload  = bytes(tcp.payload) if tcp.payload else b""
+            protocol = _tcp_label(src_port, dst_port, payload)
+            info = (
+                f"[{flags}] {src_ip}:{src_port} → {dst_ip}:{dst_port}  "
+                f"Seq={tcp.seq}  Len={len(payload)}"
+            )
+
+        elif pkt.haslayer(UDP):
+            udp      = pkt[UDP]
+            src_port = udp.sport
+            dst_port = udp.dport
+            # Extract payload directly from the UDP layer bytes (skip 8-byte header)
+            payload = bytes(pkt[UDP])[8:]
+            protocol = _label("UDP", src_port, dst_port) if payload else "UDP"
+            info = (
+                f"{src_ip}:{src_port} → {dst_ip}:{dst_port}  "
+                f"Len={max(0, (udp.len or 8) - 8)}"
+            )
+
+        else:
+            protocol = "IPv6"
+            info     = f"{src_ip} → {dst_ip}"
 
     else:
         return None  # skip non-IP / non-ARP frames
@@ -182,10 +246,11 @@ class ScapyCapture:
     Raises RuntimeError at start() time if scapy is not available.
     """
 
-    def __init__(self, iface: str | None = None):
+    def __init__(self, iface: str | None = None, bpf_filter: str = ""):
         if not SCAPY_AVAILABLE:
             raise RuntimeError("scapy is not installed — run with the npcap environment")
-        self._iface  = iface
+        self._iface      = _resolve_loopback() if iface == "loopback" else iface
+        self._bpf_filter = bpf_filter
         self._queue: queue.Queue[dict] = queue.Queue(maxsize=10_000)
         self._stop   = threading.Event()
         self._thread: threading.Thread | None = None
@@ -232,12 +297,14 @@ class ScapyCapture:
                 self._queue.put_nowait(parsed)
 
         iface_kwarg: dict = {} if self._iface is None else {"iface": self._iface}
+        filter_kwarg: dict = {} if not self._bpf_filter else {"filter": self._bpf_filter}
         try:
             _sniff(
                 prn=_on_packet,
                 store=False,
                 stop_filter=lambda _: self._stop.is_set(),
                 **iface_kwarg,
+                **filter_kwarg,
             )
         except Exception as exc:
             print(f"[scapy] capture error: {exc}")

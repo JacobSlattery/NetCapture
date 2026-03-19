@@ -9,9 +9,8 @@ import json
 import socket as _socket
 import time
 from collections import deque
-from datetime import datetime
 
-from .capture import RawCapture, get_capture_ip, build_udp_raw_hex, UDP_SINK_PORT
+from .capture import RawCapture, get_capture_ip
 from .interpreters import find_interpreter
 from ._filter import parse_filter, filter_eval
 
@@ -50,8 +49,7 @@ def _determine_mode(iface: str) -> str:
     The NETCAPTURE_MODE environment variable can pin a specific mode:
         NETCAPTURE_MODE=scapy    — require scapy/npcap (fails if unavailable)
         NETCAPTURE_MODE=real     — require raw sockets (fails if no admin)
-        NETCAPTURE_MODE=listen   — UDP sink only, no elevated privileges needed
-    Omit the variable (default) for automatic selection: scapy → real → listen.
+    Omit the variable (default) for automatic selection: scapy → real.
     """
     import os
     forced = os.environ.get("NETCAPTURE_MODE", "").lower().strip()
@@ -73,13 +71,10 @@ def _determine_mode(iface: str) -> str:
                 pass
         return "unavailable"
 
-    if forced == "listen":
-        return "listen"
-
-    if forced and forced not in ("scapy", "real", "listen"):
+    if forced and forced not in ("scapy", "real"):
         print(f"[capture] unknown NETCAPTURE_MODE={forced!r} — falling back to auto-detect")
 
-    # Auto-detect: scapy → real → listen
+    # Auto-detect: scapy → real
     if SCAPY_AVAILABLE and probe_npcap():
         return "scapy"
 
@@ -94,27 +89,8 @@ def _determine_mode(iface: str) -> str:
             return "real"
         except (PermissionError, OSError):
             pass
-    try:
-        s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
-        s.bind(("0.0.0.0", UDP_SINK_PORT))
-        s.close()
-        return "listen"
-    except OSError:
-        pass
+
     return "unavailable"
-
-
-# ── UDP sink protocol ──────────────────────────────────────────────────────────
-
-class _SinkProtocol(asyncio.DatagramProtocol):
-    def __init__(self, q: asyncio.Queue) -> None:
-        self._q = q
-
-    def datagram_received(self, data: bytes, addr: tuple) -> None:
-        self._q.put_nowait((data, addr))
-
-    def error_received(self, exc: Exception) -> None:
-        print(f"[sink] {exc}")
 
 
 # ── CaptureManager ─────────────────────────────────────────────────────────────
@@ -137,6 +113,7 @@ class CaptureManager:
 
         self._filter_terms: list[str] = []
         self._filter_ast = None
+        self._bpf_filter = ""
 
         self._seq          = 0
         self._total_bytes  = 0
@@ -147,13 +124,14 @@ class CaptureManager:
         self._buffer: deque[dict] = deque(maxlen=self.BUFFER_SIZE)
         self._subs: set[asyncio.Queue] = set()
 
-    async def start(self, iface: str = "any", filter_str: str = "") -> str:
+    async def start(self, iface: str = "any", filter_str: str = "", bpf_filter: str = "") -> str:
         if self._running:
             await self.stop()
 
         self._iface        = iface
         self._filter_terms = filter_str.split() if filter_str.strip() else []
         self._filter_ast   = parse_filter(filter_str) if filter_str.strip() else None
+        self._bpf_filter   = bpf_filter.strip()
 
         loop = asyncio.get_event_loop()
         mode = await loop.run_in_executor(None, _determine_mode, iface)
@@ -161,8 +139,7 @@ class CaptureManager:
         if mode == "unavailable":
             raise RuntimeError(
                 "No capture method available. "
-                "Run as Administrator for raw capture, or start a UDP feed on "
-                f"port {UDP_SINK_PORT} (see: pixi run mock-device --mode feed)."
+                "Run as Administrator for raw socket capture, or install Npcap."
             )
 
         self._mode    = mode
@@ -172,12 +149,10 @@ class CaptureManager:
         if mode == "scapy":
             scapy_iface = None if iface == "any" else iface
             self._task = asyncio.create_task(self._scapy_loop(scapy_iface))
-        elif mode == "real":
+        else:
             bind_ip = get_capture_ip(iface)
             assert bind_ip is not None
             self._task = asyncio.create_task(self._real_loop(bind_ip))
-        else:
-            self._task = asyncio.create_task(self._listen_loop())
 
         return mode
 
@@ -272,63 +247,14 @@ class CaptureManager:
             except asyncio.QueueFull:
                 pass
 
-    async def _run_sink(self, *, emit_stats: bool = True) -> None:
-        loop = asyncio.get_event_loop()
-        q: asyncio.Queue[tuple[bytes, tuple]] = asyncio.Queue(maxsize=10_000)
-        try:
-            transport, _ = await loop.create_datagram_endpoint(
-                lambda: _SinkProtocol(q),
-                local_addr=("0.0.0.0", UDP_SINK_PORT),
-            )
-        except OSError as exc:
-            print(f"[sink] could not bind UDP :{UDP_SINK_PORT} — {exc}")
-            return
-
-        print(f"[sink] listening on UDP :{UDP_SINK_PORT}")
-        session_start = _get_session_start()
-        last_tick     = loop.time()
-
-        try:
-            while self._running:
-                while not q.empty():
-                    data, (src_ip, src_port) = q.get_nowait()
-                    now = datetime.now()
-                    rel = time.time() - session_start
-                    self._emit_packet({
-                        "timestamp": f"{int(rel // 60):02d}:{rel % 60:06.3f}",
-                        "abs_time":  now.strftime("%H:%M:%S.") + f"{now.microsecond // 1000:03d}",
-                        "src_ip":    src_ip,
-                        "src_port":  src_port,
-                        "dst_ip":    "127.0.0.1",
-                        "dst_port":  UDP_SINK_PORT,
-                        "protocol":  "UDP",
-                        "length":    len(data),
-                        "ttl":       64,
-                        "flags":     None,
-                        "info":      f"{src_ip}:{src_port} → :{UDP_SINK_PORT}  Len={len(data)}",
-                        "raw_hex":   build_udp_raw_hex(src_ip, "127.0.0.1", src_port, UDP_SINK_PORT, data),
-                        "_payload":  data,
-                    })
-
-                now_t = loop.time()
-                if emit_stats and now_t - last_tick >= 1.0:
-                    self._emit_stats()
-                    last_tick = now_t
-                await asyncio.sleep(0.02)
-        except asyncio.CancelledError:
-            pass
-        finally:
-            transport.close()
-
     async def _scapy_loop(self, iface: str | None) -> None:
-        cap = ScapyCapture(iface)
+        cap = ScapyCapture(iface, bpf_filter=self._bpf_filter)
         cap.start(session_start=_get_session_start())
         loop       = asyncio.get_event_loop()
         last_tick  = loop.time()
         last_flush = loop.time()
         batch: list[dict] = []
         FLUSH_INTERVAL = 0.05
-        sink_task = asyncio.create_task(self._run_sink(emit_stats=False))
         try:
             while self._running:
                 pkt = await loop.run_in_executor(None, cap.get_packet, 0.05)
@@ -347,11 +273,6 @@ class CaptureManager:
         except asyncio.CancelledError:
             pass
         finally:
-            sink_task.cancel()
-            try:
-                await sink_task
-            except asyncio.CancelledError:
-                pass
             cap.stop()
 
     async def _real_loop(self, bind_ip: str) -> None:
@@ -362,7 +283,6 @@ class CaptureManager:
         last_flush = loop.time()
         batch: list[dict] = []
         FLUSH_INTERVAL = 0.05
-        sink_task = asyncio.create_task(self._run_sink(emit_stats=False))
         try:
             while self._running:
                 pkt = await loop.run_in_executor(None, cap.get_packet, 0.05)
@@ -381,15 +301,7 @@ class CaptureManager:
         except asyncio.CancelledError:
             pass
         finally:
-            sink_task.cancel()
-            try:
-                await sink_task
-            except asyncio.CancelledError:
-                pass
             cap.stop()
-
-    async def _listen_loop(self) -> None:
-        await self._run_sink(emit_stats=True)
 
 
 # Module-level singleton — shared across all router instances

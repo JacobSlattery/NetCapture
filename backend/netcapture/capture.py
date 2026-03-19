@@ -18,11 +18,6 @@ import threading
 import time
 from datetime import datetime
 
-# UDP port the backend listens on for direct device feeds (no admin required).
-# Override with NETCAPTURE_SINK_PORT env var.
-UDP_SINK_PORT: int = int(os.environ.get("NETCAPTURE_SINK_PORT", "9001"))
-
-
 # ── Protocol tables ───────────────────────────────────────────────────────────
 
 _IP_PROTO: dict[int, str] = {1: "ICMP", 6: "TCP", 17: "UDP"}
@@ -37,27 +32,6 @@ _PORT_LABEL: dict[int, str] = {
     6379: "Redis", 8080: "HTTP", 8443: "TLS",
 }
 
-def build_udp_raw_hex(
-    src_ip: str, dst_ip: str, src_port: int, dst_port: int, payload: bytes
-) -> str:
-    """
-    Construct a minimal IPv4 + UDP frame around raw payload bytes and return it
-    as a hex string.  No Ethernet header is prepended — we don't have real MAC
-    addresses in this path, so the frontend will parse from the IP layer up.
-    """
-    udp_len = 8 + len(payload)
-    udp = struct.pack("!HHHH", src_port, dst_port, udp_len, 0) + payload
-    total = 20 + len(udp)
-    ip = struct.pack(
-        "!BBHHHBBH4s4s",
-        0x45, 0, total, 0, 0x4000,
-        64, 17, 0,
-        socket.inet_aton(src_ip),
-        socket.inet_aton(dst_ip),
-    )
-    return (ip + udp).hex()
-
-
 # ── Packet parsing ────────────────────────────────────────────────────────────
 
 def _label(transport: str, src_port: int | None, dst_port: int | None) -> str:
@@ -65,6 +39,57 @@ def _label(transport: str, src_port: int | None, dst_port: int | None) -> str:
         if p and p in _PORT_LABEL:
             return _PORT_LABEL[p]
     return transport
+
+
+_HTTP_METHODS = (b"GET ", b"POST ", b"PUT ", b"DELETE ", b"HEAD ",
+                 b"OPTIONS ", b"PATCH ", b"CONNECT ", b"TRACE ", b"HTTP/")
+
+
+def _tcp_label(src_port: int | None, dst_port: int | None, payload: bytes) -> str:
+    """
+    Like _label("TCP", ...) but verifies the payload structure before committing
+    to an application-layer name.  Returns "TCP" when the payload is absent,
+    too small, or doesn't look like the expected protocol.
+    """
+    if not payload:
+        return "TCP"
+
+    candidate = _label("TCP", src_port, dst_port)
+    if candidate == "TCP":
+        return "TCP"
+
+    if candidate == "TLS":
+        # TLS record: type 20–23, version 03.00–04, then 2-byte length
+        if len(payload) >= 5 and payload[0] in (20, 21, 22, 23) \
+                and payload[1] == 3 and payload[2] <= 4:
+            return "TLS"
+        return "TCP"
+
+    if candidate == "HTTP":
+        if any(payload.startswith(m) for m in _HTTP_METHODS):
+            return "HTTP"
+        return "TCP"
+
+    if candidate == "SSH":
+        if payload.startswith(b"SSH-"):
+            return "SSH"
+        # Post-handshake SSH is binary; keep label if payload is substantial
+        return "SSH" if len(payload) >= 6 else "TCP"
+
+    if candidate == "DNS":
+        # DNS-over-TCP: 2-byte length prefix, then ≥12-byte DNS header
+        if len(payload) >= 14 and struct.unpack_from("!H", payload)[0] >= 12:
+            return "DNS"
+        return "TCP"
+
+    if candidate in ("SMTP", "POP3", "IMAP"):
+        # Text-based; first byte must be printable ASCII
+        if 32 <= payload[0] < 127:
+            return candidate
+        return "TCP"
+
+    # Generic fallback: require at least 4 bytes before labelling
+    return candidate if len(payload) >= 4 else "TCP"
 
 
 def _tcp_flags(flag_byte: int) -> str:
@@ -115,7 +140,7 @@ def parse_packet(raw: bytes, start_time: float, seq: int) -> dict | None:
         seq_num  = struct.unpack_from("!I", payload, 4)[0]
         app_payload = payload[data_off:]
         app_len  = len(app_payload)
-        transport = _label("TCP", src_port, dst_port)
+        transport = _tcp_label(src_port, dst_port, app_payload)
         info = (
             f"[{flags}] {src_ip}:{src_port} → {dst_ip}:{dst_port}  "
             f"Seq={seq_num}  Len={app_len}"
@@ -125,7 +150,7 @@ def parse_packet(raw: bytes, start_time: float, seq: int) -> dict | None:
         src_port, dst_port = struct.unpack_from("!HH", payload)
         udp_len = struct.unpack_from("!H", payload, 4)[0]
         app_payload = payload[8:]
-        transport = _label("UDP", src_port, dst_port)
+        transport = _label("UDP", src_port, dst_port) if app_payload else "UDP"
         info = (
             f"{src_ip}:{src_port} → {dst_ip}:{dst_port}  "
             f"Len={udp_len - 8}"

@@ -14,9 +14,10 @@ import {
   packets, stats, chartHistory,
   isCapturing, captureMode, connectionStatus, selectedPacket,
   trackMode, trackFingerprint, trackPrev, captureFilter, addressBook, trackLastUpdate,
-  maxPackets, capturePacketLimit, ringBuffer,
+  maxPackets, capturePacketLimit, ringBuffer, dnsCache, npcapAvailable,
 } from './stores'
 import type { Packet, ChartPoint, NetworkInterface, CaptureProfile, WsMessage, TrackFingerprint, AddressBookEntry } from './types'
+import type { ColumnVisibility } from './stores'
 import { parseFilter, matchesFilter, setAddressBook, type ParseResult } from './filter'
 
 // Keep filter's address book mirror in sync with the store
@@ -150,6 +151,9 @@ function startDisplayTick(): void {
       return result
     })
     applyTracking(batch)
+    // Trigger DNS resolution for new IPs
+    const ips = batch.map(p => [p.src_ip, p.dst_ip]).flat().filter(Boolean) as string[]
+    if (ips.length) resolveIps([...new Set(ips)])
     if (_capturePacketLimit > 0 && newTotal >= _capturePacketLimit) {
       isCapturing.set(false)
       captureMode.set('idle')
@@ -252,12 +256,12 @@ export function initCaptureService(wsUrl: string, apiBase = ''): void {
   connect()
 }
 
-export async function startCapture(iface = 'any', filter = ''): Promise<void> {
+export async function startCapture(iface = 'any', filter = '', bpfFilter = ''): Promise<void> {
   try {
     const res = await fetch(`${_apiBase}/api/capture/start`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ interface: iface, filter }),
+      body:    JSON.stringify({ interface: iface, filter, bpf_filter: bpfFilter }),
     })
     if (res.ok) {
       const body = await res.json() as { status: string; message?: string; mode: string }
@@ -344,6 +348,146 @@ export async function importCapture(file: File): Promise<void> {
   packets.set(imported)
 }
 
+// ── DNS Resolution ────────────────────────────────────────────────────────────
+
+const _dnsInflight = new Set<string>()
+const _DNS_CONCURRENCY = 5
+let _dnsQueue: string[] = []
+let _dnsRunning = 0
+
+function _processDnsQueue(): void {
+  while (_dnsRunning < _DNS_CONCURRENCY && _dnsQueue.length) {
+    const ip = _dnsQueue.shift()!
+    _dnsRunning++
+    fetch(`${_apiBase}/api/dns/resolve?ip=${encodeURIComponent(ip)}`)
+      .then(r => r.json() as Promise<{ ip: string; hostname: string | null }>)
+      .then(({ ip: resolvedIp, hostname }) => {
+        dnsCache.update(m => ({ ...m, [resolvedIp]: hostname }))
+      })
+      .catch(() => {
+        dnsCache.update(m => ({ ...m, [ip]: null }))
+      })
+      .finally(() => {
+        _dnsInflight.delete(ip)
+        _dnsRunning--
+        _processDnsQueue()
+      })
+  }
+}
+
+export function resolveIps(ips: string[]): void {
+  let cache: Record<string, string | null> = {}
+  const unsub = dnsCache.subscribe(v => { cache = v })
+  unsub()
+  for (const ip of ips) {
+    if (ip in cache || _dnsInflight.has(ip)) continue
+    _dnsInflight.add(ip)
+    _dnsQueue.push(ip)
+  }
+  _processDnsQueue()
+}
+
+// ── PCAP Export / Import ──────────────────────────────────────────────────────
+
+export async function exportPcap(): Promise<void> {
+  try {
+    const res = await fetch(`${_apiBase}/api/capture/export/pcap`)
+    if (!res.ok) return
+    const blob = await res.blob()
+    const ts   = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href     = url
+    a.download = `netcapture-${ts}.pcap`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  } catch { /* ignore */ }
+}
+
+export async function importPcap(file: File): Promise<void> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${_apiBase}/api/capture/import/pcap`, { method: 'POST', body: form })
+  const body = await res.json() as { status: string; count?: number; message?: string }
+  if (body.status !== 'ok') throw new Error(body.message ?? 'Import failed')
+  // The backend broadcasts a 'batch' message to all WS subscribers, so the
+  // frontend will receive it through the existing WebSocket handler.
+  // We just need to reset local state:
+  _displayBuf   = []
+  _lastPacketId = 0
+  _trafficHist  = []
+  selectedPacket.set(null)
+  chartHistory.set([])
+  stats.set({ total_packets: body.count ?? 0, total_bytes: 0, packets_per_sec: 0, bytes_per_sec: 0, protocol_counts: {} })
+}
+
+export async function importCsv(file: File): Promise<void> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${_apiBase}/api/capture/import/csv`, { method: 'POST', body: form })
+  const body = await res.json() as { status: string; count?: number; message?: string }
+  if (body.status !== 'ok') throw new Error(body.message ?? 'CSV import failed')
+  _displayBuf   = []
+  _lastPacketId = 0
+  _trafficHist  = []
+  selectedPacket.set(null)
+  chartHistory.set([])
+  stats.set({ total_packets: body.count ?? 0, total_bytes: 0, packets_per_sec: 0, bytes_per_sec: 0, protocol_counts: {} })
+}
+
+// ── CSV Export ────────────────────────────────────────────────────────────────
+
+export function exportCsv(filteredPkts: Packet[], colVis: ColumnVisibility, tsMode: 'relative' | 'absolute', dnsCacheMap: Map<string, string | null>): void {
+  if (!filteredPkts.length) return
+
+  function csvCell(v: string | number | null | undefined): string {
+    const s = String(v ?? '')
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  }
+
+  const headers: string[] = []
+  const rows: string[][] = []
+
+  if (colVis.no)          headers.push('No.')
+  if (colVis.time)        headers.push('Time')
+  if (colVis.source)      headers.push('Source')
+  if (colVis.destination) headers.push('Destination')
+  if (colVis.proto)       headers.push('Protocol')
+  if (colVis.length)      headers.push('Length')
+  if (colVis.info)        headers.push('Info')
+
+  for (const pkt of filteredPkts) {
+    const srcHost = dnsCacheMap.get(pkt.src_ip)
+    const dstHost = dnsCacheMap.get(pkt.dst_ip)
+    const srcDisplay = srcHost ?? (pkt.src_port != null ? `${pkt.src_ip}:${pkt.src_port}` : pkt.src_ip)
+    const dstDisplay = dstHost ?? (pkt.dst_port != null ? `${pkt.dst_ip}:${pkt.dst_port}` : pkt.dst_ip)
+
+    const row: string[] = []
+    if (colVis.no)          row.push(csvCell(pkt.id))
+    if (colVis.time)        row.push(csvCell(tsMode === 'absolute' ? (pkt.abs_time ?? pkt.timestamp) : pkt.timestamp))
+    if (colVis.source)      row.push(csvCell(srcDisplay))
+    if (colVis.destination) row.push(csvCell(dstDisplay))
+    if (colVis.proto)       row.push(csvCell(pkt.protocol))
+    if (colVis.length)      row.push(csvCell(pkt.length))
+    if (colVis.info)        row.push(csvCell(pkt.info))
+    rows.push(row)
+  }
+
+  const csv = '\uFEFF' + [headers, ...rows].map(r => r.join(',')).join('\r\n')
+  const ts   = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href     = url
+  a.download = `netcapture-${ts}.csv`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 export async function fetchInterfaces(): Promise<NetworkInterface[]> {
   try {
     const res = await fetch(`${_apiBase}/api/interfaces`)
@@ -353,6 +497,15 @@ export async function fetchInterfaces(): Promise<NetworkInterface[]> {
   } catch {
     return []
   }
+}
+
+export async function fetchCapabilities(): Promise<void> {
+  try {
+    const res = await fetch(`${_apiBase}/api/capture/capabilities`)
+    if (!res.ok) return
+    const data = await res.json() as { npcap: boolean }
+    npcapAvailable.set(data.npcap ?? false)
+  } catch { /* ignore — npcapAvailable stays false */ }
 }
 
 export async function fetchProfiles(): Promise<CaptureProfile[]> {

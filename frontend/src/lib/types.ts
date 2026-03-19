@@ -43,8 +43,9 @@ export interface CaptureProfile {
   id:          string
   name:        string
   description: string
-  interface:   string   // network interface to bind when this profile is active
-  filter:      string   // whitespace-separated OR filter terms
+  interface:   string    // network interface to bind when this profile is active
+  filter:      string    // whitespace-separated OR filter terms
+  bpf_filter?: string    // kernel-level BPF filter (Npcap mode only)
 }
 
 // ── Packet ────────────────────────────────────────────────────────────────────

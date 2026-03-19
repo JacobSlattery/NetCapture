@@ -9,7 +9,7 @@ Real-time network packet capture and display. Runs standalone or embeds into a l
 - [Pixi](https://prefix.dev/docs/pixi/overview) — manages Python and Node environments
 - [Node.js](https://nodejs.org) ≥ 20 (provided by Pixi)
 - Python ≥ 3.11 (provided by Pixi)
-- **Windows only** for raw capture modes; the UDP listen mode runs anywhere
+- **Windows only** — raw socket and Npcap capture are Windows-specific; PCAP/JSON/CSV import and export work on any platform
 
 ---
 
@@ -54,9 +54,10 @@ NetCapture selects a capture mode automatically, in order of preference:
 
 | Mode | Requires | What it captures |
 |------|----------|-----------------|
-| `scapy` | Npcap + scapy installed, `--environment npcap` | All traffic on any interface (L2) |
-| `real` | Run as Administrator | All IP traffic on one interface |
-| `listen` | Nothing | Only UDP packets sent to port 9001 |
+| `scapy` | Npcap + scapy installed, `--environment npcap` | All traffic on any interface including loopback (L2) |
+| `real` | Run as Administrator | All IP traffic on one non-loopback interface |
+
+The active mode is shown as a badge in the toolbar (e.g. **Npcap** or **Raw**).
 
 ### Enabling Npcap / Scapy
 
@@ -79,22 +80,109 @@ Set `NETCAPTURE_MODE` to pin a specific mode instead of auto-detecting:
 ```bash
 NETCAPTURE_MODE=scapy   pixi run --environment npcap dev-api   # require scapy/npcap
 NETCAPTURE_MODE=real    pixi run dev-api                        # require raw sockets (admin)
-NETCAPTURE_MODE=listen  pixi run dev-api                        # UDP sink only, no admin needed
 ```
 
 If the forced mode is unavailable the server will return an error rather than silently falling back.
 
 ---
 
-## Mock Device (no admin rights)
+## Mock Device
 
-Sends synthetic UDP packets to the backend sink so you can develop without elevated privileges:
+Sends synthetic UDP traffic for testing without a real device:
 
 ```bash
-pixi run mock-device
+pixi run mock-device                      # random text/binary payloads (default)
+pixi run mock-device --format nc-frame    # NC-Frame binary packets — decoded in the detail panel
 ```
 
-Modes: `--mode feed` (default), `chat`, `sender`, `receiver`, `echo`.
+The device runs in `feed` mode by default — it sends UDP datagrams to `127.0.0.1:9001`. With Npcap running in the `npcap` environment these are captured via the loopback interface.
+
+**Payload formats (`--format`)**
+
+| Format | Description |
+|--------|-------------|
+| `random` | Cycles through plaintext, JSON, and binary templates |
+| `nc-frame` | NC-Frame binary protocol — decoded fields appear in the packet detail panel |
+
+**Operating modes (`--mode`)**
+
+| Mode | Description |
+|------|-------------|
+| `feed` | Sends to `127.0.0.1:9001` — captured via loopback (requires Npcap) |
+| `chat` | Echo server + sender on the LAN interface |
+| `sender` | Sends datagrams to `--ip:--port` |
+| `receiver` | Listens on `--ip:--port` |
+| `echo` | Listens on `--ip:--port` and echoes each datagram back |
+
+> `chat`, `sender`, and `echo` modes use the real LAN interface and require Npcap or Administrator to capture.
+
+---
+
+## UI Overview
+
+### Toolbar
+
+The toolbar has two rows:
+
+**Row 1 — capture controls**
+
+`NetCapture` brand · interface/profile selector · `Start`/`Stop` · `Clear` · capture mode badge · ⚙ settings (far right)
+
+**Row 2 — filter bar**
+
+`Presets` dropdown · filter input · `Apply` · `Clear` · BPF filter input + presets button *(Npcap mode only)*
+
+### Settings Panel (⚙ gear icon)
+
+Click the gear icon at the top-right to open the settings panel:
+
+| Section | Setting | Description |
+|---------|---------|-------------|
+| **Recording** | Export ▸ | **PCAP** — Wireshark-compatible pcap file; **JSON** — full packet data |
+| | Import ▸ | **PCAP** — load a pcap file; **JSON** — load a previous JSON export; **CSV** — Wireshark CSV export |
+| **Addresses** | Manage Addresses | Open the address book editor |
+| | Export / Import Address Book | Save or load address book entries |
+| **Filter Presets** | Manage Presets | Open the preset editor |
+| | Export / Import Presets | Save or load filter presets |
+| **Capture** | Buffer size | Max packets kept in memory (ring buffer size) |
+| | Ring buffer | On = drop oldest when full; Off = keep all until stopped |
+| | Auto-stop after | Stop capture automatically after N packets (0 = unlimited) |
+| **Display** | Timestamp | Relative (MM:SS.mmm from start) or Absolute (HH:MM:SS.mmm) |
+| | Auto-scroll | Follow newest packets during live capture |
+| | Columns | Toggle visibility of individual packet table columns |
+
+All display and capture settings are persisted to `localStorage` and restored on next load.
+
+### Packet Table
+
+- **Resizable columns** — hover a column header to reveal a drag handle on its right edge; drag to resize.
+- **Hideable columns** — toggle individual columns on/off from Settings → Display → Columns.
+- **Auto-scroll** — when enabled, the table follows the newest packet during live capture. Scrolling up pauses auto-scroll; scrolling back to the bottom resumes it.
+- **Right-click context menu** on Source, Destination, or Protocol cells:
+  - **Filter for / Exclude** — appends an `ip.src ==`, `ip.dst ==`, or `proto ==` condition to the filter
+  - **Filter / Exclude by name** — appears when the address has a resolved name; uses `src_name`/`dst_name`
+  - **Filter source/dest port** — appends a port condition
+  - **Add IP to address book** — opens the address book editor pre-filled with the IP
+  - **Add IP:Port to address book** — opens the address book editor pre-filled with `IP:port` (shown only when a port is present)
+
+### Address Book Editor
+
+Maps IP addresses (and IP:port pairs) to human-readable names. Names appear in the Source and Destination columns, highlighted in blue.
+
+- **Resizable dialog** — drag the bottom-right corner to resize the window
+- **Resizable columns** — drag column header edges to adjust column widths
+- Entries with a port (e.g. `192.168.1.1:9001`) take precedence over IP-only entries when matching
+
+### Filter Presets Editor
+
+Manage saved filter expressions for quick reuse.
+
+- **Resizable dialog** — drag the bottom-right corner to resize the window
+- **Resizable columns** — drag the Title column edge to adjust widths
+- **Unified list** — built-in presets and user presets are in one editable list
+- **Restore defaults** — resets the list back to the original built-in presets
+
+Both editors stay open until the user explicitly closes them with the **✕** button or **Cancel** — clicking outside the dialog does nothing.
 
 ---
 
@@ -139,7 +227,10 @@ app.include_router(create_router(
 ), prefix="/netcapture")
 ```
 
-Each profile requires `id`, `name`, `interface`, and `filter`. `description` is optional.
+Each profile requires `id`, `name`, `interface`, and `filter`. `description` and `bpf_filter` are optional. `bpf_filter` is a kernel-level BPF expression applied at capture time (Npcap mode only — e.g. `"udp port 9001"`, `"tcp and port 443"`).
+
+The `interface` field accepts the system adapter name (e.g. `"Ethernet"`, `"Wi-Fi"`), `"any"` for the default outbound interface, or `"loopback"` for the Npcap loopback adapter (127.0.0.1 inter-process traffic, requires Npcap).
+
 To extend the defaults rather than replace them:
 
 ```python
@@ -188,11 +279,9 @@ from netcapture import register_interpreter
 register_interpreter(MyProtocol())
 ```
 
-#### Exported symbols
-
 #### Address Book
 
-Map IP addresses (and IP:port pairs) to human-readable names. Names are shown in the Source and Destination columns of the packet table, highlighted in blue. The address book can be pre-populated at startup and edited live by the user via the **Addresses** button in the toolbar.
+Map IP addresses (and IP:port pairs) to human-readable names. Names are shown in the Source and Destination columns of the packet table, highlighted in blue. The address book can be pre-populated at startup and edited live by the user via **Settings → Manage Addresses**.
 
 Pass initial entries to `create_router()`:
 
@@ -221,24 +310,17 @@ addr_name == "My Sensor"        # either direction
 ip.src == "My Sensor"           # ip.src also accepts resolved names
 ```
 
-**Right-click filter menus:**
-
-Right-clicking the Source, Destination, or Proto cell of any row shows a context menu with quick filter options:
-- **Filter for / Exclude** — appends `ip.src == x`, `ip.dst == x`, or `proto == x` to the active filter
-- **Filter / Exclude by name** — appears when the address has a resolved name; uses `src_name`/`dst_name`
-- **Filter source/dest port** — appends a port condition
-
-The appended clause is always combined with the existing filter using `and`, wrapped in parentheses.
-
 **Testing with the UDP mock device:**
 
-Add `127.0.0.1` or `127.0.0.1:9001` to the address book to name the mock device traffic:
+Add `127.0.0.1` to the address book to name mock device traffic (the loopback capture sees it as `127.0.0.1`):
 
 ```python
-address_book=[{"id": "1", "address": "127.0.0.1:9001", "name": "UDP Mock Device"}]
+address_book=[{"id": "1", "address": "127.0.0.1", "name": "UDP Mock Device"}]
 ```
 
-Then start the mock device and start capturing — the Source column will show **UDP Mock Device** instead of the raw IP.
+Then run `pixi run mock-device --format nc-frame` and start capturing on the loopback interface — the Source column will show **UDP Mock Device** instead of the raw IP.
+
+#### Exported symbols
 
 | Symbol | What it is |
 |--------|-----------|
@@ -297,7 +379,8 @@ NetCapture/
 │   │   ├── _manager.py      # CaptureManager, capture loop, session state
 │   │   ├── _filter.py       # Wireshark-style filter parser + evaluator
 │   │   ├── capture.py       # Raw socket capture
-│   │   ├── capture_scapy.py # Scapy/Npcap capture
+│   │   ├── capture_scapy.py # Scapy/Npcap capture (loopback support)
+│   │   ├── pcap_io.py       # PCAP file read/write (no scapy required)
 │   │   ├── profiles.py      # DEFAULT_PROFILES list
 │   │   ├── interpreters/    # Packet payload decoders
 │   │   │   ├── __init__.py  # registry: register(), find_interpreter(), Interpreter protocol
@@ -308,17 +391,19 @@ NetCapture/
 ├── frontend/
 │   ├── src/
 │   │   ├── lib/             # Exportable component library
-│   │   │   ├── index.ts         # Library entry point — exports NetCapture
-│   │   │   ├── NetCapture.svelte  # Main public component (wsUrl, apiBase props)
-│   │   │   ├── captureService.ts  # WebSocket + REST service layer
-│   │   │   ├── stores.ts          # Svelte writable/derived stores
-│   │   │   ├── filter.ts          # Wireshark-style filter parser + evaluator
-│   │   │   ├── types.ts           # TypeScript type definitions
-│   │   │   └── components/        # Internal UI components
-│   │   │       ├── Toolbar.svelte
+│   │   │   ├── index.ts              # Library entry point — exports NetCapture
+│   │   │   ├── NetCapture.svelte     # Main public component (wsUrl, apiBase props)
+│   │   │   ├── captureService.ts     # WebSocket + REST service layer
+│   │   │   ├── stores.ts             # Svelte writable/derived stores (settings, visibility, etc.)
+│   │   │   ├── filter.ts             # Wireshark-style filter parser + evaluator
+│   │   │   ├── types.ts              # TypeScript type definitions
+│   │   │   └── components/           # Internal UI components
+│   │   │       ├── Toolbar.svelte         # Capture controls + settings panel
+│   │   │       ├── PacketTable.svelte     # Packet list with resizable/hideable columns
+│   │   │       ├── PacketDetail.svelte    # Hex + decoded field inspector
+│   │   │       ├── AddressBookEditor.svelte  # Resizable address book manager dialog
+│   │   │       ├── PresetEditor.svelte       # Resizable filter preset manager dialog
 │   │   │       ├── StatsBar.svelte
-│   │   │       ├── PacketTable.svelte
-│   │   │       ├── PacketDetail.svelte
 │   │   │       ├── Charts.svelte
 │   │   │       └── FieldValue.svelte
 │   │   ├── app.css          # Global styles + CSS custom properties (theme vars)

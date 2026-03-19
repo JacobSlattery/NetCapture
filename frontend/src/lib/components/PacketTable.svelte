@@ -3,7 +3,7 @@
   import {
     filteredPackets, selectedPacket, isCapturing, trackMode, trackFingerprint, trackPrev,
     captureFilter, addressBook, addressBookPrefill, timestampMode,
-    autoScrollEnabled, columnVisibility,
+    autoScrollEnabled, columnVisibility, scrollToSelectedTick, dnsCache, followStreamPacket,
   } from '../stores'
   import type { Packet, AddressBookEntry } from '../types'
   import type { ColumnVisibility } from '../stores'
@@ -208,16 +208,18 @@
   function openProtoMenu(e: MouseEvent, pkt: Packet): void {
     e.preventDefault()
     const proto = pkt.protocol
-    ctxMenu = {
-      x: e.clientX, y: e.clientY,
-      items: [
-        { label: 'Filter for protocol', sub: `proto == ${proto}`, action: () => appendFilter(`proto == ${proto}`) },
-        { label: 'Exclude protocol',    sub: `not proto == ${proto}`, action: () => appendFilter(`not proto == ${proto}`) },
-        { separator: true },
-        { label: 'Copy value', sub: proto, action: () => copyText(proto) },
-        { label: 'Copy frame', sub: 'JSON', action: () => copyFrame(pkt) },
-      ],
+    const items: MenuItem[] = [
+      { label: 'Filter for protocol', sub: `proto == ${proto}`, action: () => appendFilter(`proto == ${proto}`) },
+      { label: 'Exclude protocol',    sub: `not proto == ${proto}`, action: () => appendFilter(`not proto == ${proto}`) },
+      { separator: true },
+      { label: 'Copy value', sub: proto, action: () => copyText(proto) },
+      { label: 'Copy frame', sub: 'JSON', action: () => copyFrame(pkt) },
+    ]
+    if (pkt.src_port != null && pkt.dst_port != null) {
+      items.push({ separator: true })
+      items.push({ label: `Follow ${pkt.protocol.split('/')[0]} Stream`, action: () => followStreamPacket.set(pkt) })
     }
+    ctxMenu = { x: e.clientX, y: e.clientY, items }
   }
 
   // ── Scroll handling ────────────────────────────────────────────────────────
@@ -288,6 +290,13 @@
       tick().then(() => { if (bodyEl) bodyEl.scrollTop = bodyEl.scrollHeight })
     }
     prevCapturing = $isCapturing
+  }
+
+  $: if ($scrollToSelectedTick && $selectedPacket && bodyEl) {
+    const idx = $filteredPackets.findIndex(p => p.id === $selectedPacket!.id)
+    if (idx >= 0) {
+      bodyEl.scrollTop = Math.max(0, idx * ROW_H - bodyEl.clientHeight / 2)
+    }
   }
 
   afterUpdate(() => {
@@ -392,21 +401,33 @@
         {#if $columnVisibility.source}
           <!-- svelte-ignore a11y-no-static-element-interactions -->
           <div
-            class="px-3 py-1.5 truncate {hasName(pkt.src_ip, pkt.src_port, $addressBook) ? 'text-blue-300' : 'text-[var(--nc-fg-1)]'}"
+            class="px-3 py-1.5 truncate {hasName(pkt.src_ip, pkt.src_port, $addressBook) || $dnsCache[pkt.src_ip] != null ? 'text-blue-300' : 'text-[var(--nc-fg-1)]'}"
             on:contextmenu|stopPropagation={(e) => openSrcMenu(e, pkt)}
             title="{pkt.src_ip}{pkt.src_port != null ? ':' + pkt.src_port : ''}"
           >
-            {displayAddr(pkt.src_ip, pkt.src_port, $addressBook)}
+            {#if hasName(pkt.src_ip, pkt.src_port, $addressBook)}
+              {displayAddr(pkt.src_ip, pkt.src_port, $addressBook)}
+            {:else if $dnsCache[pkt.src_ip] != null}
+              {$dnsCache[pkt.src_ip]}{pkt.src_port != null ? ':' + pkt.src_port : ''}
+            {:else}
+              {displayAddr(pkt.src_ip, pkt.src_port, $addressBook)}
+            {/if}
           </div>
         {/if}
         {#if $columnVisibility.destination}
           <!-- svelte-ignore a11y-no-static-element-interactions -->
           <div
-            class="px-3 py-1.5 truncate {hasName(pkt.dst_ip, pkt.dst_port, $addressBook) ? 'text-blue-300' : 'text-[var(--nc-fg-1)]'}"
+            class="px-3 py-1.5 truncate {hasName(pkt.dst_ip, pkt.dst_port, $addressBook) || $dnsCache[pkt.dst_ip] != null ? 'text-blue-300' : 'text-[var(--nc-fg-1)]'}"
             on:contextmenu|stopPropagation={(e) => openDstMenu(e, pkt)}
             title="{pkt.dst_ip}{pkt.dst_port != null ? ':' + pkt.dst_port : ''}"
           >
-            {displayAddr(pkt.dst_ip, pkt.dst_port, $addressBook)}
+            {#if hasName(pkt.dst_ip, pkt.dst_port, $addressBook)}
+              {displayAddr(pkt.dst_ip, pkt.dst_port, $addressBook)}
+            {:else if $dnsCache[pkt.dst_ip] != null}
+              {$dnsCache[pkt.dst_ip]}{pkt.dst_port != null ? ':' + pkt.dst_port : ''}
+            {:else}
+              {displayAddr(pkt.dst_ip, pkt.dst_port, $addressBook)}
+            {/if}
           </div>
         {/if}
         {#if $columnVisibility.proto}
