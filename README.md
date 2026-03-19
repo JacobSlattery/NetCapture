@@ -56,6 +56,7 @@ NetCapture selects a capture mode automatically, in order of preference:
 |------|----------|-----------------|
 | `scapy` | Npcap + scapy installed, `--environment npcap` | All traffic on any interface including loopback (L2) |
 | `real` | Run as Administrator | All IP traffic on one non-loopback interface |
+| `inject` | Nothing | Packets pushed in via `/ws/inject` — select **WS Inject** interface in the UI |
 
 The active mode is shown as a badge in the toolbar (e.g. **Npcap** or **Raw**).
 
@@ -86,9 +87,33 @@ If the forced mode is unavailable the server will return an error rather than si
 
 ---
 
-## Mock Device
+## Mock Devices
 
-Sends synthetic UDP traffic for testing without a real device:
+### WebSocket Injector (`ws_injector.py`)
+
+The easiest way to test without a real device or elevated privileges. Connects to `/ws/inject` and streams packets directly into the live display.
+
+```bash
+pixi run inject                            # NC-Frame at 2 Hz (default)
+pixi run inject --mode random --rate 10    # random payloads at 10 Hz
+pixi run inject --mode replay --file capture.pcap --speed 2.0   # replay a pcap at 2× speed
+```
+
+**Setup:** select **WS Inject (/ws/inject)** from the interface dropdown and click **Start** before running the injector. Packets sent while capture is stopped are silently discarded — the injector prints `⏸` for each discarded packet and `✓` once recording begins.
+
+**Modes (`--mode`)**
+
+| Mode | Description |
+|------|-------------|
+| `nc-frame` | NC-Frame binary packets — decoded fields appear in the detail panel (default) |
+| `random` | Cycles through plaintext, JSON, and binary payload templates |
+| `replay` | Re-injects a `.pcap` file at original inter-packet timing (requires scapy) |
+
+Options: `--rate N` (packets/sec), `--count N` (stop after N), `--speed X` (replay multiplier), `--url ws://host:port/ws/inject`.
+
+### UDP Mock Device (`udp_device.py`)
+
+Sends real UDP traffic over the network stack — requires Npcap or Administrator to capture:
 
 ```bash
 pixi run mock-device                      # random text/binary payloads (default)
@@ -194,7 +219,7 @@ NetCapture is a Python package (backend) and a Svelte component library (fronten
 
 Install the package:
 ```bash
-pip install ./backend            # basic (raw socket + listen modes)
+pip install ./backend            # basic (raw socket + WS inject modes)
 pip install ./backend[npcap]     # with scapy for Npcap support
 ```
 
@@ -233,7 +258,9 @@ Connect to `ws://localhost:8000/ws/inject` (adjust prefix if embedded) and send 
 [{ ... }, { ... }]
 ```
 
-The server responds to each message with `{"ok": true, "injected": N}` or `{"ok": false, "error": "..."}`.
+The server responds to each message with `{"ok": true, "injected": N}`, `{"ok": false, "discarded": N, "error": "capture not running"}` if capture hasn't been started, or `{"ok": false, "error": "..."}` for malformed input.
+
+> **Capture must be running** — select **WS Inject (/ws/inject)** from the interface dropdown and click **Start** before sending packets. Packets received while stopped are discarded without error.
 
 **Fields:**
 
@@ -451,7 +478,8 @@ NetCapture/
 │   │   └── main.ts          # Standalone app entry point
 │   └── package.json
 ├── tools/
-│   └── udp_device.py        # Mock UDP device for testing
+│   ├── udp_device.py        # Mock UDP device — real UDP traffic via loopback or LAN
+│   └── ws_injector.py       # WebSocket injector — pushes packets via /ws/inject (no admin needed)
 ├── tests/                   # Pytest unit tests
 └── pixi.toml                # Task runner and environment definitions
 ```
