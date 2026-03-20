@@ -202,7 +202,11 @@ function connect(): void {
           break
         case 'batch': {
           ingest(msg.data)
-          if (_displayBuf.length) {
+          // During active capture, leave packets in _displayBuf for the 4Hz
+          // display tick to render — prevents rapid-fire Svelte store updates
+          // from blocking the JS event loop under heavy traffic.
+          // When not capturing (reconnect replay), drain immediately.
+          if (_displayBuf.length && !displayTimer) {
             const snap = _displayBuf.splice(0)
             let merged: Packet[] = []
             packets.update(list => {

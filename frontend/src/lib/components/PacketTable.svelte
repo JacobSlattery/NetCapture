@@ -116,7 +116,7 @@
 
   function rowClass(pkt: Packet, isSelected: boolean): string {
     if (isSelected) return 'bg-blue-900/50 border-l-2 border-blue-400'
-    return `${ROW_TINT[pkt.protocol] ?? ''} border-l-2 border-transparent hover:bg-[var(--nc-row-hover)] hover:border-blue-400/60 cursor-pointer`
+    return `${ROW_TINT[pkt.protocol] ?? ''} nc-row-unselected`
   }
   function badgeStyle(proto: string): string {
     return `background-color: var(${BADGE_VAR[proto] ?? '--nc-p-default'})`

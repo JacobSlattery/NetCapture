@@ -510,9 +510,26 @@ import 'netcapture/netcapture.css'
 > ```css
 > /* your app's global CSS (e.g. app.css) */
 > @import "tailwindcss";
-> @source "../node_modules/netcapture/src";
+>
+> /* npm install path: */
+> @source "../node_modules/netcapture/src/lib";
+> /* local file: install — adjust to point at the frontend/src/lib directory: */
+> @source "../../netcapture/frontend/src/lib";
 > ```
-> If you installed via local path, adjust the path to point at the `frontend/src/` directory.
+> Point `@source` at the `src/lib` subdirectory specifically, not the whole `src/` or `frontend/` tree.
+
+> **Tailwind 3 users:** add NetCapture's source to the `content` array in `tailwind.config.js`:
+> ```js
+> // tailwind.config.js
+> module.exports = {
+>   content: [
+>     // ... your existing paths ...
+>     './node_modules/netcapture/src/lib/**/*.{svelte,ts}',
+>     // local file: install:
+>     // '../../netcapture/frontend/src/lib/**/*.{svelte,ts}',
+>   ],
+> }
+> ```
 
 **Dark theme:**
 

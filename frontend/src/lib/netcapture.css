@@ -90,8 +90,7 @@
 }
 
 /* ── Protocol row-tint utility classes ───────────────────────────────────── */
-/* Used by PacketTable — add this file to your Tailwind content paths or     */
-/* import it here so these classes are available to the bundle.              */
+/* Used by PacketTable — these are plain CSS classes, no Tailwind needed.    */
 .nc-tint-tcp   { background-color: var(--nc-p-tcp-tint);   }
 .nc-tint-udp   { background-color: var(--nc-p-udp-tint);   }
 .nc-tint-dns   { background-color: var(--nc-p-dns-tint);   }
@@ -99,3 +98,15 @@
 .nc-tint-http  { background-color: var(--nc-p-http-tint);  }
 .nc-tint-https { background-color: var(--nc-p-https-tint); }
 .nc-tint-arp   { background-color: var(--nc-p-arp-tint);   }
+
+/* ── Packet row hover state ──────────────────────────────────────────────── */
+/* Applied to unselected packet rows. Plain CSS so it works without Tailwind */
+/* generating the bg-[var(--nc-row-hover)] arbitrary-value utility class.    */
+.nc-row-unselected {
+  border-left: 2px solid transparent;
+  cursor: pointer;
+}
+.nc-row-unselected:hover {
+  background-color: var(--nc-row-hover);
+  border-left-color: rgb(96 165 250 / 0.6); /* blue-400/60 */
+}
