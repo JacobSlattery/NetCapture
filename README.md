@@ -339,15 +339,35 @@ class MyProtocol:
 
     def match(self, pkt: dict, payload: bytes) -> bool:
         # Called for every packet — return True to claim it.
-        # pkt keys: src_ip, dst_ip, src_port, dst_port, protocol, length, …
+        #
+        # pkt keys available in both match() and decode():
+        #   src_ip          str           source IP address
+        #   dst_ip          str           destination IP address
+        #   src_port        int | None    source port (TCP/UDP only)
+        #   dst_port        int | None    destination port (TCP/UDP only)
+        #   protocol        str           e.g. "TCP", "UDP", "DNS", "TLS"
+        #   length          int           total packet length in bytes
+        #   ttl             int | None    IP time-to-live
+        #   flags           str | None    TCP flags string, e.g. "SYN, ACK"
+        #   info            str           one-line summary shown in the packet table
+        #   raw_hex         str           full raw frame as a hex string
+        #   _header_bytes   bytes         raw transport header bytes (TCP/UDP/ICMP
+        #                                 header before the application payload).
+        #                                 Useful for TCP sequence numbers, flags,
+        #                                 UDP checksum, etc. Empty (b'') if N/A.
+        #
+        # payload is the isolated application-layer bytes — transport headers
+        # (IP, TCP/UDP/ICMP) have already been stripped.
         return pkt.get("dst_port") == 5000 and len(payload) >= 2 and payload[0] == 0xAB
 
-    def decode(self, payload: bytes) -> DecodedFrame:
+    def decode(self, pkt: dict, payload: bytes) -> DecodedFrame:
         # Parse the payload and return structured fields.
+        # pkt provides the same context as match() — access _header_bytes,
+        # src_port, TCP sequence numbers, etc. as needed.
         return DecodedFrame(self.name, fields=[
-            DecodedField("type",   payload[0],           "u8"),
+            DecodedField("type",   payload[0],                         "u8"),
             DecodedField("value",  int.from_bytes(payload[1:3], "big"), "u16"),
-            DecodedField("label",  payload[3:].decode(), "str"),
+            DecodedField("label",  payload[3:].decode(),                "str"),
         ])
 
 app.include_router(create_router(
@@ -355,14 +375,42 @@ app.include_router(create_router(
 ), prefix="/netcapture")
 ```
 
-Built-in interpreters run first; `extra_interpreters` are appended in order. The first interpreter whose `match()` returns `True` wins.
+**Supported `DecodedField` types:**
 
-You can also register interpreters independently (useful when the interpreter lives in a different module):
+| Type | Wire size | Description |
+|------|-----------|-------------|
+| `u8` / `u16` / `u32` / `u64` | 1–8 bytes | Unsigned integers |
+| `i8` / `i16` / `i32` / `i64` | 1–8 bytes | Signed integers |
+| `f32` / `f64` | 4–8 bytes | IEEE 754 floats |
+| `str` | any | Short string (≤ 255 bytes) |
+| `strlong` | any | Long string (≤ 65 535 bytes) |
+| `bool` | 1 byte | Boolean |
+| `hex` | any | Raw bytes displayed as hex string |
+| `json` | any | Nested list or dict (arbitrary depth) |
+| `list` / `dict` | — | Nested Python structures (via `json` tag) |
+
+The type string is shown in the UI next to each field value and is useful for conveying value semantics (e.g. `i16` signals signed and bounded, `f32` signals floating-point).
+
+**Registration order and priority:**
+
+Built-in interpreters run first; `extra_interpreters` are appended in order. The first interpreter whose `match()` returns `True` wins. To run your interpreter *before* the built-ins (e.g. if your packets share the NC magic bytes), use `prepend=True`:
 
 ```python
 from netcapture import register_interpreter
-register_interpreter(MyProtocol())
+register_interpreter(MyProtocol(), prepend=True)
 ```
+
+You can also register as part of `create_router()` (appended, not prepended):
+
+```python
+app.include_router(create_router(
+    extra_interpreters=[MyProtocol()],
+), prefix="/netcapture")
+```
+
+**Error handling:**
+
+If `match()` raises an exception, that interpreter is silently skipped and the next one is tried. If `decode()` raises, a `DecodedFrame` with the error message is returned and the error is shown in red in the decoded panel — partial results decoded before the exception are preserved.
 
 #### Address Book
 
@@ -419,6 +467,8 @@ Then run `pixi run mock-device --format nc-frame` and start capturing on the loo
 
 ### Frontend — Svelte Component
 
+> **Peer requirements:** Svelte **^5**, Vite **^6**, and `@sveltejs/vite-plugin-svelte` **^6** (or SvelteKit **^2**). The component uses Svelte 5 runes and the `mount()` API — it will not work with Svelte 4.
+
 #### 1. Install
 
 **Option A — local path install (recommended for monorepos):**
@@ -456,15 +506,11 @@ Import the NetCapture stylesheet **once** in your app's global CSS or root layou
 import 'netcapture/netcapture.css'
 ```
 
-> **Tailwind users:** if your app uses Tailwind, also add NetCapture's component files to your `content` paths so Tailwind generates the utility classes they use:
-> ```js
-> // tailwind.config.js
-> export default {
->   content: [
->     './src/**/*.{svelte,ts}',
->     './node_modules/netcapture/src/**/*.{svelte,ts}',
->   ],
-> }
+> **Tailwind 4 users:** add a `@source` directive to your CSS so Tailwind scans NetCapture's component files and generates the utility classes they use:
+> ```css
+> /* your app's global CSS (e.g. app.css) */
+> @import "tailwindcss";
+> @source "../node_modules/netcapture/src";
 > ```
 > If you installed via local path, adjust the path to point at the `frontend/src/` directory.
 
@@ -550,9 +596,11 @@ Import the CSS in your root layout instead of every page:
 <!-- src/routes/+layout.svelte -->
 <script>
   import 'netcapture/netcapture.css'
+  import type { Snippet } from 'svelte'
+  let { children }: { children: Snippet } = $props()
 </script>
 
-<slot />
+{@render children()}
 ```
 
 ---

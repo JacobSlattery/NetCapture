@@ -109,15 +109,17 @@ def _parse_scapy(pkt, start_time: float, seq: int) -> dict | None:  # type: igno
     now = datetime.now()
     rel = time.time() - start_time
 
-    src_ip:   str | None  = None
-    dst_ip:   str | None  = None
-    src_port: int | None  = None
-    dst_port: int | None  = None
-    ttl:      int | None  = None
-    flags:    str | None  = None
-    protocol: str         = "Unknown"
-    info:     str         = ""
-    payload:  bytes | None = None
+    src_ip:       str | None   = None
+    dst_ip:       str | None   = None
+    src_port:     int | None   = None
+    dst_port:     int | None   = None
+    ttl:          int | None   = None
+    flags:        str | None   = None
+    protocol:     str          = "Unknown"
+    info:         str          = ""
+    payload:      bytes | None = None
+    header_bytes: bytes        = b''   # raw transport header (before application payload)
+    payload_offset: int        = 0     # byte offset of payload within raw_hex
 
     if pkt.haslayer(ARP):
         arp      = pkt[ARP]
@@ -133,17 +135,22 @@ def _parse_scapy(pkt, start_time: float, seq: int) -> dict | None:  # type: igno
         dst_ip = ip.dst
         ttl    = ip.ttl
 
+        # Ethernet header offset: 14 bytes if present, 0 for raw-IP frames
+        _eth_off = 14 if pkt.haslayer(Ether) else 0
+
         if pkt.haslayer(TCP):
             tcp      = pkt[TCP]
             src_port = tcp.sport
             dst_port = tcp.dport
             flags    = _tcp_flags(int(tcp.flags))
-            # Extract payload directly from raw IP bytes (skip IP header + TCP data offset)
-            _ip_bytes = bytes(pkt[IP])
-            _ihl = (_ip_bytes[0] & 0x0F) * 4
-            _tcp_bytes = _ip_bytes[_ihl:]
+            # Extract payload and header bytes from raw IP bytes
+            _ip_bytes     = bytes(pkt[IP])
+            _ihl          = (_ip_bytes[0] & 0x0F) * 4
+            _tcp_bytes    = _ip_bytes[_ihl:]
             _tcp_data_off = ((_tcp_bytes[12] >> 4) * 4) if len(_tcp_bytes) >= 13 else 20
-            payload  = _tcp_bytes[_tcp_data_off:] if len(_tcp_bytes) > _tcp_data_off else b""
+            payload      = _tcp_bytes[_tcp_data_off:] if len(_tcp_bytes) > _tcp_data_off else b""
+            header_bytes = _tcp_bytes[:_tcp_data_off]   # TCP header incl. options
+            payload_offset = _eth_off + _ihl + _tcp_data_off
             protocol = _tcp_label(src_port, dst_port, payload)
             info = (
                 f"[{flags}] {src_ip}:{src_port} → {dst_ip}:{dst_port}  "
@@ -154,10 +161,11 @@ def _parse_scapy(pkt, start_time: float, seq: int) -> dict | None:  # type: igno
             udp      = pkt[UDP]
             src_port = udp.sport
             dst_port = udp.dport
-            # Extract payload directly from raw IP bytes (skip IP header + 8-byte UDP header)
             _ip_bytes = bytes(pkt[IP])
-            _ihl = (_ip_bytes[0] & 0x0F) * 4
-            payload = _ip_bytes[_ihl + 8:] if len(_ip_bytes) > _ihl + 8 else b""
+            _ihl      = (_ip_bytes[0] & 0x0F) * 4
+            payload      = _ip_bytes[_ihl + 8:] if len(_ip_bytes) > _ihl + 8 else b""
+            header_bytes = _ip_bytes[_ihl : _ihl + 8]  # 8-byte UDP header
+            payload_offset = _eth_off + _ihl + 8
             protocol = _label("UDP", src_port, dst_port) if payload else "UDP"
             info = (
                 f"{src_ip}:{src_port} → {dst_ip}:{dst_port}  "
@@ -170,6 +178,11 @@ def _parse_scapy(pkt, start_time: float, seq: int) -> dict | None:  # type: igno
                 0: "Echo reply",    3: "Dest unreachable",
                 8: "Echo request",  11: "Time exceeded",
             }
+            _ip_bytes    = bytes(pkt[IP])
+            _ihl         = (_ip_bytes[0] & 0x0F) * 4
+            _icmp_bytes  = _ip_bytes[_ihl:]
+            header_bytes = _icmp_bytes[:8] if len(_icmp_bytes) >= 8 else _icmp_bytes[:4]
+            payload_offset = _eth_off + _ihl + len(header_bytes)
             protocol = "ICMP"
             info = (
                 f"{_names.get(icmp.type, f'Type {icmp.type}')}  "
@@ -177,6 +190,9 @@ def _parse_scapy(pkt, start_time: float, seq: int) -> dict | None:  # type: igno
             )
 
         else:
+            _ip_bytes = bytes(pkt[IP])
+            _ihl      = (_ip_bytes[0] & 0x0F) * 4
+            payload_offset = _eth_off + _ihl
             protocol = {1: "ICMP", 6: "TCP", 17: "UDP"}.get(ip.proto, f"IP/{ip.proto}")
             info     = f"{src_ip} → {dst_ip}"
 
@@ -184,13 +200,19 @@ def _parse_scapy(pkt, start_time: float, seq: int) -> dict | None:  # type: igno
         ip6      = pkt[IPv6]
         src_ip   = ip6.src
         dst_ip   = ip6.dst
+        _eth_off = 14 if pkt.haslayer(Ether) else 0
+        _ip6_hdr = 40  # fixed IPv6 header length
 
         if pkt.haslayer(TCP):
             tcp      = pkt[TCP]
             src_port = tcp.sport
             dst_port = tcp.dport
             flags    = _tcp_flags(int(tcp.flags))
-            payload  = bytes(tcp.payload) if tcp.payload else b""
+            _tcp_raw      = bytes(pkt[TCP])
+            _tcp_data_off = ((_tcp_raw[12] >> 4) * 4) if len(_tcp_raw) >= 13 else 20
+            payload      = bytes(tcp.payload) if tcp.payload else b""
+            header_bytes = _tcp_raw[:_tcp_data_off]
+            payload_offset = _eth_off + _ip6_hdr + _tcp_data_off
             protocol = _tcp_label(src_port, dst_port, payload)
             info = (
                 f"[{flags}] {src_ip}:{src_port} → {dst_ip}:{dst_port}  "
@@ -201,8 +223,10 @@ def _parse_scapy(pkt, start_time: float, seq: int) -> dict | None:  # type: igno
             udp      = pkt[UDP]
             src_port = udp.sport
             dst_port = udp.dport
-            # Extract payload directly from the UDP layer bytes (skip 8-byte header)
-            payload = bytes(pkt[UDP])[8:]
+            _udp_raw     = bytes(pkt[UDP])
+            payload      = _udp_raw[8:]
+            header_bytes = _udp_raw[:8]
+            payload_offset = _eth_off + _ip6_hdr + 8
             protocol = _label("UDP", src_port, dst_port) if payload else "UDP"
             info = (
                 f"{src_ip}:{src_port} → {dst_ip}:{dst_port}  "
@@ -210,6 +234,7 @@ def _parse_scapy(pkt, start_time: float, seq: int) -> dict | None:  # type: igno
             )
 
         else:
+            payload_offset = _eth_off + _ip6_hdr
             protocol = "IPv6"
             info     = f"{src_ip} → {dst_ip}"
 
@@ -230,7 +255,10 @@ def _parse_scapy(pkt, start_time: float, seq: int) -> dict | None:  # type: igno
         "flags":     flags,
         "info":      info,
         "raw_hex":   raw_hex,
-        "_payload":  payload or None,
+        # Internal — consumed by _emit_packet, never serialised to the frontend.
+        "_payload":        payload or None,
+        "_header_bytes":   header_bytes,
+        "_payload_offset": payload_offset,
     }
 
 
@@ -251,11 +279,13 @@ class ScapyCapture:
             raise RuntimeError("scapy is not installed — run with the npcap environment")
         self._iface      = _resolve_loopback() if iface == "loopback" else iface
         self._bpf_filter = bpf_filter
-        self._queue: queue.Queue[dict] = queue.Queue(maxsize=10_000)
-        self._stop   = threading.Event()
+        self._queue: queue.Queue[dict] = queue.Queue(maxsize=50_000)
+        self._stop      = threading.Event()
         self._thread: threading.Thread | None = None
-        self._seq    = 0
-        self._start  = 0.0
+        self._seq       = 0
+        self._start     = 0.0
+        self._dropped   = 0
+        self._filter_fn = None   # optional pre-filter set by the capture manager
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -281,6 +311,39 @@ class ScapyCapture:
         except queue.Empty:
             return None
 
+    def drain(self, timeout: float = 0.05) -> list[dict]:
+        """
+        Dequeue all currently available packets in one call.
+
+        Blocks up to `timeout` seconds waiting for the first packet, then
+        immediately drains the rest of the queue without blocking.  Returning
+        a batch instead of one packet at a time prevents the queue from
+        filling up when background traffic arrives faster than one packet per
+        asyncio iteration.
+        """
+        result: list[dict] = []
+        try:
+            result.append(self._queue.get(timeout=timeout))
+        except queue.Empty:
+            return result
+        while True:
+            try:
+                result.append(self._queue.get_nowait())
+            except queue.Empty:
+                break
+        return result
+
+    def set_filter(self, fn) -> None:  # type: ignore[no-untyped-def]
+        """
+        Optionally pre-filter packets in the capture thread before they are
+        queued.  ``fn(pkt: dict) -> bool`` — packets for which fn returns
+        False are discarded immediately, before entering the queue.
+
+        Only set this when the filter does not depend on decoded/interpreter
+        fields (those are populated later, in the asyncio loop).
+        """
+        self._filter_fn = fn
+
     @property
     def iface(self) -> str | None:
         return self._iface
@@ -293,8 +356,20 @@ class ScapyCapture:
                 return
             self._seq += 1
             parsed = _parse_scapy(pkt, self._start, self._seq)
-            if parsed and not self._queue.full():
+            if not parsed:
+                return
+            # Pre-filter: discard non-matching packets before they consume
+            # queue space.  Only active when the filter has no decoded/
+            # interpreter terms (those are populated later in the async loop).
+            if self._filter_fn and not self._filter_fn(parsed):
+                return
+            if not self._queue.full():
                 self._queue.put_nowait(parsed)
+            else:
+                self._dropped += 1
+                if self._dropped == 1 or self._dropped % 1000 == 0:
+                    print(f"[scapy] capture queue full — {self._dropped} packet(s) dropped"
+                          " (consider using a BPF filter to reduce capture volume)")
 
         iface_kwarg: dict = {} if self._iface is None else {"iface": self._iface}
         filter_kwarg: dict = {} if not self._bpf_filter else {"filter": self._bpf_filter}

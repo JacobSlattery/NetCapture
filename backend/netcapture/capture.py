@@ -127,18 +127,20 @@ def parse_packet(raw: bytes, start_time: float, seq: int) -> dict | None:
     transport    = _IP_PROTO.get(proto_num, f"IP/{proto_num}")
     payload      = raw[ihl:]
 
-    src_port: int | None    = None
-    dst_port: int | None    = None
-    flags: str | None       = None
+    src_port: int | None      = None
+    dst_port: int | None      = None
+    flags: str | None         = None
     app_payload: bytes | None = None
-    info                    = f"{src_ip} → {dst_ip}"
+    header_bytes: bytes       = b''   # raw transport header (before application payload)
+    info                      = f"{src_ip} → {dst_ip}"
 
     if proto_num == 6 and len(payload) >= 20:          # TCP
         src_port, dst_port = struct.unpack_from("!HH", payload)
         data_off = (payload[12] >> 4) * 4
         flags    = _tcp_flags(payload[13])
         seq_num  = struct.unpack_from("!I", payload, 4)[0]
-        app_payload = payload[data_off:]
+        app_payload  = payload[data_off:]
+        header_bytes = payload[:data_off]              # TCP header (incl. options)
         app_len  = len(app_payload)
         transport = _tcp_label(src_port, dst_port, app_payload)
         info = (
@@ -149,7 +151,8 @@ def parse_packet(raw: bytes, start_time: float, seq: int) -> dict | None:
     elif proto_num == 17 and len(payload) >= 8:        # UDP
         src_port, dst_port = struct.unpack_from("!HH", payload)
         udp_len = struct.unpack_from("!H", payload, 4)[0]
-        app_payload = payload[8:]
+        app_payload  = payload[8:]
+        header_bytes = payload[:8]                     # 8-byte UDP header
         transport = _label("UDP", src_port, dst_port) if app_payload else "UDP"
         info = (
             f"{src_ip}:{src_port} → {dst_ip}:{dst_port}  "
@@ -162,6 +165,7 @@ def parse_packet(raw: bytes, start_time: float, seq: int) -> dict | None:
             0: "Echo reply", 3: "Dest unreachable",
             8: "Echo request", 11: "Time exceeded",
         }
+        header_bytes = payload[:8] if len(payload) >= 8 else payload[:4]
         info = (
             f"{_names.get(icmp_type, f'Type {icmp_type}')}  "
             f"code={code}  {src_ip} → {dst_ip}"
@@ -170,6 +174,10 @@ def parse_packet(raw: bytes, start_time: float, seq: int) -> dict | None:
     # Raw sockets on Windows give us the IP packet without an Ethernet header.
     # We send only what we actually have — the frontend detects IP-only frames.
     raw_hex = raw[:total_len].hex()
+
+    # Payload byte offset within raw_hex (no Ethernet header for raw sockets).
+    # ihl = IP header length in bytes; add transport header length for TCP/UDP.
+    payload_offset = ihl + len(header_bytes)
 
     now = datetime.now()
     rel = time.time() - start_time
@@ -188,7 +196,9 @@ def parse_packet(raw: bytes, start_time: float, seq: int) -> dict | None:
         "info":      info,
         "raw_hex":   raw_hex,
         # Internal — consumed by _emit_packet, never serialised to the frontend.
-        "_payload":  app_payload,
+        "_payload":       app_payload,
+        "_header_bytes":  header_bytes,
+        "_payload_offset": payload_offset,
     }
 
 
@@ -218,11 +228,15 @@ class RawCapture:
         self._bind_ip   = bind_ip
         self._buf_size  = buf_size
         self._sock: socket.socket | None = None
-        self._queue: queue.Queue[bytes] = queue.Queue(maxsize=10_000)
+        # Queue holds parsed dicts (parsing happens in the capture thread so
+        # non-matching packets can be discarded before consuming queue space).
+        self._queue: queue.Queue[dict] = queue.Queue(maxsize=50_000)
         self._stop      = threading.Event()
         self._thread: threading.Thread | None = None
         self._seq       = 0
         self._start     = 0.0
+        self._dropped   = 0
+        self._filter_fn = None   # optional pre-filter set by the capture manager
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -251,18 +265,46 @@ class RawCapture:
             self._thread.join(timeout=2)
             self._thread = None
 
+    def set_filter(self, fn) -> None:  # type: ignore[no-untyped-def]
+        """
+        Optionally pre-filter packets in the capture thread before they are
+        queued.  ``fn(pkt: dict) -> bool`` — packets for which fn returns
+        False are discarded immediately, before entering the queue.
+
+        Only set this when the filter does not depend on decoded/interpreter
+        fields (those are populated later, in the asyncio loop).
+        """
+        self._filter_fn = fn
+
     def get_packet(self, timeout: float = 0.1) -> dict | None:
         """
-        Dequeue and parse the next captured packet.
-        Returns None on timeout or parse failure.
+        Dequeue the next captured packet.
+        Returns None on timeout.
         Safe to call from a thread-pool executor.
         """
         try:
-            raw = self._queue.get(timeout=timeout)
+            return self._queue.get(timeout=timeout)
         except queue.Empty:
             return None
-        self._seq += 1
-        return parse_packet(raw, self._start, self._seq)
+
+    def drain(self, timeout: float = 0.05) -> list[dict]:
+        """
+        Dequeue all currently available packets in one call.
+
+        Blocks up to `timeout` seconds waiting for the first packet, then
+        immediately drains the rest of the queue without blocking.
+        """
+        result: list[dict] = []
+        try:
+            result.append(self._queue.get(timeout=timeout))
+        except queue.Empty:
+            return result
+        while True:
+            try:
+                result.append(self._queue.get_nowait())
+            except queue.Empty:
+                break
+        return result
 
     @property
     def bind_ip(self) -> str:
@@ -284,8 +326,22 @@ class RawCapture:
                 if self._sock is None:
                     break
                 raw = self._sock.recv(self._buf_size)
+                self._seq += 1
+                parsed = parse_packet(raw, self._start, self._seq)
+                if not parsed:
+                    continue
+                # Pre-filter: discard non-matching packets before they consume
+                # queue space.  Only active when the filter has no decoded/
+                # interpreter terms (those are populated later in the async loop).
+                if self._filter_fn and not self._filter_fn(parsed):
+                    continue
                 if not self._queue.full():
-                    self._queue.put_nowait(raw)
+                    self._queue.put_nowait(parsed)
+                else:
+                    self._dropped += 1
+                    if self._dropped == 1 or self._dropped % 1000 == 0:
+                        print(f"[raw] capture queue full — {self._dropped} packet(s) dropped"
+                              " (consider using a BPF filter to reduce capture volume)")
             except socket.timeout:
                 pass
             except OSError:

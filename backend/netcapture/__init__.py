@@ -15,11 +15,16 @@ Passing custom profiles and interpreters
         name = "My Protocol"
 
         def match(self, pkt: dict, payload: bytes) -> bool:
+            # pkt includes: src_ip, dst_ip, src_port, dst_port, protocol,
+            # length, ttl, flags, info, raw_hex, _header_bytes.
+            # payload is the application-layer bytes (transport headers stripped).
             return pkt.get("dst_port") == 5000
 
-        def decode(self, payload: bytes) -> DecodedFrame:
+        def decode(self, pkt: dict, payload: bytes) -> DecodedFrame:
+            # pkt provides the same keys as match() — including _header_bytes
+            # for raw transport header access (TCP options, seq numbers, etc.).
             return DecodedFrame("My Protocol", fields=[
-                DecodedField("raw", payload.hex(), "str"),
+                DecodedField("raw", payload.hex(), "hex"),
             ])
 
     app.include_router(create_router(
@@ -43,7 +48,8 @@ Registering interpreters independently (before create_router is called)
 ────────────────────────────────────────────────────────────────────────
     from netcapture import register_interpreter
 
-    register_interpreter(MyInterpreter())
+    register_interpreter(MyInterpreter())            # appended (runs after built-ins)
+    register_interpreter(MyInterpreter(), prepend=True)  # prepended (runs before built-ins)
 
 The frontend component must be configured with matching URLs:
 

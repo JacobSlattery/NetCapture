@@ -67,8 +67,7 @@
   function onResizeMove(e: MouseEvent) {
     if (!resizingCol) return
     const delta = e.clientX - resizeStartX
-    colWidths[resizingCol] = Math.max(80, resizeStartW + delta)
-    colWidths = colWidths  // trigger reactivity
+    colWidths = { ...colWidths, [resizingCol]: Math.max(80, resizeStartW + delta) }
   }
 
   function onResizeUp() {
@@ -79,21 +78,21 @@
   }
 </script>
 
-<div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60">
+<div class="fixed inset-0 z-100 flex items-center justify-center bg-black/60">
   <div
-    class="flex flex-col rounded-lg shadow-2xl bg-[var(--nc-surface-1)] border border-[var(--nc-border)]"
+    class="flex flex-col rounded-lg shadow-2xl bg-(--nc-surface-1) border border-(--nc-border)"
     style="width: 640px; height: 650px; min-width: 380px; min-height: 280px; resize: both; overflow: hidden;"
   >
 
     <!-- Header -->
-    <div class="flex items-center justify-between px-5 py-3 border-b border-[var(--nc-border)] shrink-0">
+    <div class="flex items-center justify-between px-5 py-3 border-b border-(--nc-border) shrink-0">
       <div>
-        <div class="font-semibold text-sm text-[var(--nc-fg)]">Filter Presets</div>
-        <div class="text-[10px] text-[var(--nc-fg-4)] mt-0.5">
+        <div class="font-semibold text-sm text-(--nc-fg)">Filter Presets</div>
+        <div class="text-[10px] text-(--nc-fg-4) mt-0.5">
           Edit, reorder, add, or remove presets. Changes are saved to your session.
         </div>
       </div>
-      <button on:click={cancel} class="text-[var(--nc-fg-4)] hover:text-[var(--nc-fg)] transition-colors p-1">
+      <button on:click={cancel} aria-label="Close" class="text-(--nc-fg-4) hover:text-(--nc-fg) transition-colors p-1">
         <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
           <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"/>
         </svg>
@@ -108,8 +107,8 @@
           <col />
           <col style="width: 32px" />
         </colgroup>
-        <thead class="sticky top-0 bg-[var(--nc-surface-1)] z-10">
-          <tr class="text-[10px] uppercase tracking-wider text-[var(--nc-fg-4)] border-b border-[var(--nc-border)]">
+        <thead class="sticky top-0 bg-(--nc-surface-1) z-10">
+          <tr class="text-[10px] uppercase tracking-wider text-(--nc-fg-4) border-b border-(--nc-border)">
             <th class="text-left px-4 py-2 font-semibold relative group/rh select-none">
               Title
               <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -125,22 +124,22 @@
         </thead>
         <tbody>
           {#each local as preset, i}
-            <tr class="border-b border-[var(--nc-border-1)] hover:bg-[var(--nc-surface-2)] group">
+            <tr class="border-b border-(--nc-border-1) hover:bg-(--nc-surface-2) group">
               <td class="px-4 pr-2 py-1.5 truncate">
                 <input bind:value={preset.title} on:input={markDirty}
-                  class="w-full bg-transparent text-[var(--nc-fg)] focus:outline-none
-                         focus:bg-[var(--nc-surface)] rounded px-1 -mx-1"
+                  class="w-full bg-transparent text-(--nc-fg) focus:outline-none
+                         focus:bg-(--nc-surface) rounded px-1 -mx-1"
                   placeholder="Preset name" />
               </td>
               <td class="px-4 pr-2 py-1.5 truncate">
                 <input bind:value={preset.filter} on:input={markDirty}
-                  class="w-full bg-transparent text-[var(--nc-fg)] font-mono focus:outline-none
-                         focus:bg-[var(--nc-surface)] rounded px-1 -mx-1"
+                  class="w-full bg-transparent text-(--nc-fg) font-mono focus:outline-none
+                         focus:bg-(--nc-surface) rounded px-1 -mx-1"
                   placeholder="ip.src == 192.168.1.1" />
               </td>
               <td class="pr-3 text-center">
                 <button on:click={() => removePreset(i)}
-                  class="opacity-0 group-hover:opacity-100 text-[var(--nc-fg-4)] hover:text-red-400 transition-all"
+                  class="opacity-0 group-hover:opacity-100 text-(--nc-fg-4) hover:text-red-400 transition-all"
                   title="Remove">
                   <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
                     <path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clip-rule="evenodd"/>
@@ -150,7 +149,7 @@
             </tr>
           {:else}
             <tr>
-              <td colspan="3" class="px-4 py-6 text-center text-[var(--nc-fg-5)] text-xs">
+              <td colspan="3" class="px-4 py-6 text-center text-(--nc-fg-5) text-xs">
                 No presets yet. Add one below.
               </td>
             </tr>
@@ -160,14 +159,14 @@
     </div>
 
     <!-- Add row -->
-    <div class="shrink-0 border-t border-[var(--nc-border)] px-4 py-3 bg-[var(--nc-surface)]">
+    <div class="shrink-0 border-t border-(--nc-border) px-4 py-3 bg-(--nc-surface)">
       <div class="flex items-center gap-2">
         <input bind:value={newTitle} on:keydown={handleNewKey}
-          class="w-40 bg-[var(--nc-surface-1)] text-[var(--nc-fg)] border border-[var(--nc-border)]
+          class="w-40 bg-(--nc-surface-1) text-(--nc-fg) border border-(--nc-border)
                  rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
           placeholder="Preset name" />
         <input bind:value={newFilter} on:keydown={handleNewKey}
-          class="flex-1 bg-[var(--nc-surface-1)] text-[var(--nc-fg)] border border-[var(--nc-border)]
+          class="flex-1 bg-(--nc-surface-1) text-(--nc-fg) border border-(--nc-border)
                  rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-blue-500"
           placeholder="ip.src == 192.168.1.1 and proto == UDP" />
         <button on:click={addPreset} disabled={!newTitle.trim() || !newFilter.trim()}
@@ -179,11 +178,11 @@
     </div>
 
     <!-- Footer -->
-    <div class="shrink-0 flex items-center justify-between gap-2 px-5 py-3 border-t border-[var(--nc-border)]">
+    <div class="shrink-0 flex items-center justify-between gap-2 px-5 py-3 border-t border-(--nc-border)">
       {#if defaultPresets.length}
         <button on:click={restoreDefaults}
-          class="px-3 py-1 rounded text-xs border border-[var(--nc-border)]
-                 text-[var(--nc-fg-4)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg-2)] transition-colors"
+          class="px-3 py-1 rounded text-xs border border-(--nc-border)
+                 text-(--nc-fg-4) hover:bg-(--nc-surface-2) hover:text-(--nc-fg-2) transition-colors"
           title="Reset to the original built-in presets">
           Restore defaults
         </button>
@@ -192,8 +191,8 @@
       {/if}
       <div class="flex items-center gap-2">
         <button on:click={cancel}
-          class="px-3 py-1 rounded text-xs border border-[var(--nc-border)]
-                 text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] transition-colors">
+          class="px-3 py-1 rounded text-xs border border-(--nc-border)
+                 text-(--nc-fg-2) hover:bg-(--nc-surface-2) transition-colors">
           Cancel
         </button>
         <button on:click={save}

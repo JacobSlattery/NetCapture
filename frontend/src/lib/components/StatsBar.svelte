@@ -47,19 +47,19 @@
   $: statusPulse = $connectionStatus === 'connected' || $connectionStatus === 'connecting'
 </script>
 
-<div class="flex items-center gap-4 px-4 py-1.5 bg-[var(--nc-surface)] border-b border-[var(--nc-border)] text-xs overflow-x-auto shrink-0 font-mono">
+<div class="flex items-center gap-4 px-4 py-1.5 bg-(--nc-surface) border-b border-(--nc-border) text-xs overflow-x-auto shrink-0 font-mono">
   <!-- Counters -->
   <div class="flex items-center gap-1 whitespace-nowrap">
-    <span class="text-[var(--nc-fg-4)]">PKT</span>
-    <span class="text-[var(--nc-fg)] font-bold">{fmtNum($stats.total_packets)}</span>
+    <span class="text-(--nc-fg-4)">PKT</span>
+    <span class="text-(--nc-fg) font-bold">{fmtNum($stats.total_packets)}</span>
   </div>
   <div class="flex items-center gap-1 whitespace-nowrap">
-    <span class="text-[var(--nc-fg-4)]">SIZE</span>
-    <span class="text-[var(--nc-fg)] font-bold">{fmtBytes($stats.total_bytes)}</span>
+    <span class="text-(--nc-fg-4)">SIZE</span>
+    <span class="text-(--nc-fg) font-bold">{fmtBytes($stats.total_bytes)}</span>
   </div>
   <div class="flex items-center gap-1 whitespace-nowrap">
-    <span class="text-[var(--nc-fg-4)]">RATE</span>
-    <span class="text-[var(--nc-fg)] font-bold">{$stats.packets_per_sec}/s</span>
+    <span class="text-(--nc-fg-4)">RATE</span>
+    <span class="text-(--nc-fg) font-bold">{$stats.packets_per_sec}/s</span>
   </div>
   {#if $captureFilter ?? '' !== ''}
     <div class="flex items-center gap-1 whitespace-nowrap" style="color: var(--nc-p-tcp)">
@@ -69,21 +69,21 @@
   {/if}
 
   <!-- Divider -->
-  <div class="w-px h-4 bg-[var(--nc-border)] shrink-0"></div>
+  <div class="w-px h-4 bg-(--nc-border) shrink-0"></div>
 
   <!-- Protocol bars -->
   {#each topProtos as [proto, count]}
     {@const pct = Math.round((count / protoTotal) * 100)}
     <div class="flex items-center gap-1.5 whitespace-nowrap">
       <div class="w-2 h-2 rounded-sm shrink-0" style={protoStyle(proto)}></div>
-      <span class="text-[var(--nc-fg-2)]">{proto}</span>
-      <div class="w-14 bg-[var(--nc-surface-2)] rounded-full h-1.5 shrink-0">
+      <span class="text-(--nc-fg-2)">{proto}</span>
+      <div class="w-14 bg-(--nc-surface-2) rounded-full h-1.5 shrink-0">
         <div
           class="h-1.5 rounded-full transition-[width] duration-300"
           style="width: {pct}%; {protoStyle(proto)}"
         ></div>
       </div>
-      <span class="text-[var(--nc-fg-4)]">{pct}%</span>
+      <span class="text-(--nc-fg-4)">{pct}%</span>
     </div>
   {/each}
 

@@ -94,23 +94,23 @@
   }
 </script>
 
-<div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60">
+<div class="fixed inset-0 z-100 flex items-center justify-center bg-black/60">
   <div
-    class="flex flex-col rounded-lg shadow-2xl bg-[var(--nc-surface-1)] border border-[var(--nc-border)]"
+    class="flex flex-col rounded-lg shadow-2xl bg-(--nc-surface-1) border border-(--nc-border)"
     style="width: 680px; height: 520px; min-width: 420px; min-height: 280px; resize: both; overflow: hidden;"
   >
     <!-- Header -->
-    <div class="flex items-center justify-between px-5 py-3 border-b border-[var(--nc-border)] shrink-0">
+    <div class="flex items-center justify-between px-5 py-3 border-b border-(--nc-border) shrink-0">
       <div>
-        <div class="font-semibold text-sm text-[var(--nc-fg)]">Address Book</div>
-        <div class="text-[10px] text-[var(--nc-fg-4)] mt-0.5">
+        <div class="font-semibold text-sm text-(--nc-fg)">Address Book</div>
+        <div class="text-[10px] text-(--nc-fg-4) mt-0.5">
           Requires an IP address; port is optional (e.g. <span class="font-mono">192.168.1.1</span> or <span class="font-mono">192.168.1.1:9001</span>).
           Filter by name using <span class="font-mono">src_name</span>, <span class="font-mono">dst_name</span>, or <span class="font-mono">ip.src == "MyDevice"</span>.
         </div>
       </div>
       <button
         on:click={cancel}
-        class="text-[var(--nc-fg-4)] hover:text-[var(--nc-fg)] transition-colors p-1"
+        class="text-(--nc-fg-4) hover:text-(--nc-fg) transition-colors p-1"
         title="Close"
       >
         <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
@@ -128,8 +128,8 @@
           <col />
           <col style="width: 32px" />
         </colgroup>
-        <thead class="sticky top-0 bg-[var(--nc-surface-1)] z-10">
-          <tr class="text-[10px] uppercase tracking-wider text-[var(--nc-fg-4)] border-b border-[var(--nc-border)]">
+        <thead class="sticky top-0 bg-(--nc-surface-1) z-10">
+          <tr class="text-[10px] uppercase tracking-wider text-(--nc-fg-4) border-b border-(--nc-border)">
             <th class="text-left px-4 py-2 font-semibold relative group/rh select-none">
               IP or IP:Port
               <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -154,13 +154,13 @@
         </thead>
         <tbody>
           {#each entries as entry (entry.id)}
-            <tr class="border-b border-[var(--nc-border-1)] hover:bg-[var(--nc-surface-2)] group">
+            <tr class="border-b border-(--nc-border-1) hover:bg-(--nc-surface-2) group">
               <td class="px-4 py-1.5 truncate">
                 <input
                   bind:value={entry.address}
                   on:input={markDirty}
-                  class="w-full bg-transparent text-[var(--nc-fg)] font-mono focus:outline-none
-                         focus:bg-[var(--nc-surface)] rounded px-1 -mx-1"
+                  class="w-full bg-transparent text-(--nc-fg) font-mono focus:outline-none
+                         focus:bg-(--nc-surface) rounded px-1 -mx-1"
                   placeholder="192.168.1.1"
                 />
               </td>
@@ -168,8 +168,8 @@
                 <input
                   bind:value={entry.name}
                   on:input={markDirty}
-                  class="w-full bg-transparent text-[var(--nc-fg)] focus:outline-none
-                         focus:bg-[var(--nc-surface)] rounded px-1 -mx-1"
+                  class="w-full bg-transparent text-(--nc-fg) focus:outline-none
+                         focus:bg-(--nc-surface) rounded px-1 -mx-1"
                   placeholder="My Device"
                 />
               </td>
@@ -177,15 +177,15 @@
                 <input
                   bind:value={entry.notes}
                   on:input={markDirty}
-                  class="w-full bg-transparent text-[var(--nc-fg-3)] focus:outline-none
-                         focus:bg-[var(--nc-surface)] rounded px-1 -mx-1"
+                  class="w-full bg-transparent text-(--nc-fg-3) focus:outline-none
+                         focus:bg-(--nc-surface) rounded px-1 -mx-1"
                   placeholder="Optional notes"
                 />
               </td>
               <td class="pr-3 text-center">
                 <button
                   on:click={() => removeEntry(entry.id)}
-                  class="opacity-0 group-hover:opacity-100 text-[var(--nc-fg-4)] hover:text-red-400 transition-all"
+                  class="opacity-0 group-hover:opacity-100 text-(--nc-fg-4) hover:text-red-400 transition-all"
                   title="Remove"
                 >
                   <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -196,7 +196,7 @@
             </tr>
           {:else}
             <tr>
-              <td colspan="4" class="px-4 py-6 text-center text-[var(--nc-fg-5)] text-xs">
+              <td colspan="4" class="px-4 py-6 text-center text-(--nc-fg-5) text-xs">
                 No entries yet. Add one below.
               </td>
             </tr>
@@ -206,12 +206,12 @@
     </div>
 
     <!-- Add new entry row -->
-    <div class="shrink-0 border-t border-[var(--nc-border)] px-4 py-3 bg-[var(--nc-surface)]">
+    <div class="shrink-0 border-t border-(--nc-border) px-4 py-3 bg-(--nc-surface)">
       <div class="flex items-center gap-2">
         <input
           bind:value={newAddress}
           on:keydown={handleNewKeydown}
-          class="w-48 bg-[var(--nc-surface-1)] text-[var(--nc-fg)] border border-[var(--nc-border)]
+          class="w-48 bg-(--nc-surface-1) text-(--nc-fg) border border-(--nc-border)
                  rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-blue-500"
           placeholder="192.168.1.1"
         />
@@ -219,14 +219,14 @@
           bind:this={nameInputEl}
           bind:value={newName}
           on:keydown={handleNewKeydown}
-          class="w-36 bg-[var(--nc-surface-1)] text-[var(--nc-fg)] border border-[var(--nc-border)]
+          class="w-36 bg-(--nc-surface-1) text-(--nc-fg) border border-(--nc-border)
                  rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
           placeholder="Name"
         />
         <input
           bind:value={newNotes}
           on:keydown={handleNewKeydown}
-          class="flex-1 bg-[var(--nc-surface-1)] text-[var(--nc-fg)] border border-[var(--nc-border)]
+          class="flex-1 bg-(--nc-surface-1) text-(--nc-fg) border border-(--nc-border)
                  rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
           placeholder="Notes (optional)"
         />
@@ -242,11 +242,11 @@
     </div>
 
     <!-- Footer -->
-    <div class="shrink-0 flex items-center justify-end gap-2 px-5 py-3 border-t border-[var(--nc-border)]">
+    <div class="shrink-0 flex items-center justify-end gap-2 px-5 py-3 border-t border-(--nc-border)">
       <button
         on:click={cancel}
-        class="px-3 py-1 rounded text-xs border border-[var(--nc-border)]
-               text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] transition-colors"
+        class="px-3 py-1 rounded text-xs border border-(--nc-border)
+               text-(--nc-fg-2) hover:bg-(--nc-surface-2) transition-colors"
       >
         Cancel
       </button>

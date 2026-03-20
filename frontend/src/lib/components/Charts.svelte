@@ -161,8 +161,8 @@
       ],
     })
 
-    lineChart.on('legendselectchanged', (e: { selected: Record<string, boolean> }) => {
-      saveLegend(e.selected)
+    lineChart.on('legendselectchanged', (e: unknown) => {
+      saveLegend((e as { selected: Record<string, boolean> }).selected)
     })
   }
 
@@ -264,8 +264,8 @@
   $: updateLine($chartHistory)
 </script>
 
-<div class="flex border-b border-[var(--nc-border)] bg-[var(--nc-surface)] shrink-0" style="height:190px">
-  <div bind:this={pieEl} class="w-[32%] min-w-[180px]"></div>
-  <div class="w-px bg-[var(--nc-surface-2)]"></div>
+<div class="flex border-b border-(--nc-border) bg-(--nc-surface) shrink-0" style="height:190px">
+  <div bind:this={pieEl} class="w-[32%] min-w-45"></div>
+  <div class="w-px bg-(--nc-surface-2)"></div>
   <div bind:this={lineEl} class="flex-1"></div>
 </div>

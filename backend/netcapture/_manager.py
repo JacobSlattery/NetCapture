@@ -12,7 +12,7 @@ from collections import deque
 
 from .capture import RawCapture, get_capture_ip
 from .interpreters import find_interpreter
-from ._filter import parse_filter, filter_eval
+from ._filter import parse_filter, filter_eval, filter_uses_decoded
 
 try:
     from .capture_scapy import ScapyCapture, SCAPY_AVAILABLE, probe_npcap
@@ -116,6 +116,7 @@ class CaptureManager:
 
         self._filter_terms: list[str] = []
         self._filter_ast = None
+        self._filter_needs_decoded = False
         self._bpf_filter = ""
 
         self._seq          = 0
@@ -134,6 +135,7 @@ class CaptureManager:
         self._iface        = iface
         self._filter_terms = filter_str.split() if filter_str.strip() else []
         self._filter_ast   = parse_filter(filter_str) if filter_str.strip() else None
+        self._filter_needs_decoded = filter_uses_decoded(self._filter_ast)
         self._bpf_filter   = bpf_filter.strip()
 
         loop = asyncio.get_event_loop()
@@ -149,15 +151,22 @@ class CaptureManager:
         self._running = True
         print(f"[capture] starting — mode={mode!r}  iface={iface!r}")
 
+        # When the filter has no decoded/interpreter terms it is safe to
+        # evaluate it in the capture thread — non-matching packets are
+        # discarded before they ever enter the queue.
+        pre_filter = self._matches_filter if (
+            self._filter_ast is not None and not self._filter_needs_decoded
+        ) else None
+
         if mode == "inject":
             self._task = asyncio.create_task(self._inject_loop())
         elif mode == "scapy":
             scapy_iface = None if iface == "any" else iface
-            self._task = asyncio.create_task(self._scapy_loop(scapy_iface))
+            self._task = asyncio.create_task(self._scapy_loop(scapy_iface, pre_filter))
         else:
             bind_ip = get_capture_ip(iface)
             assert bind_ip is not None
-            self._task = asyncio.create_task(self._real_loop(bind_ip))
+            self._task = asyncio.create_task(self._real_loop(bind_ip, pre_filter))
 
         return mode
 
@@ -210,26 +219,65 @@ class CaptureManager:
         except Exception:
             return True
 
-    def _emit_packet(self, pkt: dict) -> None:
+    def _process_packet(self, pkt: dict) -> dict | None:
+        """
+        Run a raw packet through the interpreter + filter pipeline.
+
+        Mutates ``pkt`` in-place (strips internal fields, assigns id).
+        Returns the ready-to-serialise dict, or None if the packet is
+        filtered out.  Does NOT broadcast to subscribers — callers are
+        responsible for that so they can batch multiple packets into one
+        WebSocket message.
+        """
         payload: bytes | None = pkt.pop("_payload", None)
+        # _header_bytes and _payload_offset stay in pkt so interpreters can
+        # read them during match()/decode(); stripped before JSON serialisation.
 
-        if not self._matches_filter(pkt):
-            return
-
+        # Run interpreter before filter so that decoded fields and the
+        # `interpreter` field are available to filter expressions such as
+        # `interpreter == nc-frame` or `decoded.type == 0x01`.
         if payload:
             frame = find_interpreter(pkt, payload)
             if frame is not None:
-                pkt["decoded"] = frame.to_dict()
+                decoded = frame.to_dict()
+                if pkt.get("_payload_offset"):
+                    decoded["payloadOffset"] = pkt["_payload_offset"]
+                pkt["decoded"] = decoded
+
+        if not self._matches_filter(pkt):
+            pkt.pop("_header_bytes",   None)
+            pkt.pop("_payload_offset", None)
+            return None
+
+        pkt.pop("_header_bytes",   None)
+        pkt.pop("_payload_offset", None)
 
         self._seq += 1
         pkt["id"] = self._seq
-        self._total_bytes                         += pkt["length"]
-        self._proto_counts[pkt["protocol"]]        = self._proto_counts.get(pkt["protocol"], 0) + 1
+        self._total_bytes                    += pkt["length"]
+        self._proto_counts[pkt["protocol"]]   = self._proto_counts.get(pkt["protocol"], 0) + 1
         self._sec_pkts  += 1
         self._sec_bytes += pkt["length"]
-
         self._buffer.append(pkt)
-        msg = json.dumps({"type": "packet", "data": pkt})
+        return pkt
+
+    def _broadcast_batch(self, pkts: list[dict]) -> None:
+        """Serialise a list of ready packets and push one message to every subscriber."""
+        if not pkts:
+            return
+        msg = json.dumps({"type": "batch", "data": pkts})
+        for q in list(self._subs):
+            try:
+                q.put_nowait(msg)
+            except asyncio.QueueFull:
+                pass
+
+    def _emit_packet(self, pkt: dict) -> None:
+        """Process and immediately broadcast a single packet (used by inject mode)."""
+        processed = self._process_packet(pkt)
+        if processed is None:
+            return
+        msg = json.dumps({"type": "packet", "data": processed})
         for q in list(self._subs):
             try:
                 q.put_nowait(msg)
@@ -266,26 +314,34 @@ class CaptureManager:
         except asyncio.CancelledError:
             pass
 
-    async def _scapy_loop(self, iface: str | None) -> None:
+    async def _scapy_loop(self, iface: str | None, pre_filter=None) -> None:
         cap = ScapyCapture(iface, bpf_filter=self._bpf_filter)
+        if pre_filter is not None:
+            cap.set_filter(pre_filter)
         cap.start(session_start=_get_session_start())
-        loop       = asyncio.get_event_loop()
-        last_tick  = loop.time()
-        last_flush = loop.time()
-        batch: list[dict] = []
+        loop      = asyncio.get_event_loop()
+        last_tick = loop.time()
         FLUSH_INTERVAL = 0.05
         try:
             while self._running:
-                pkt = await loop.run_in_executor(None, cap.get_packet, 0.05)
-                if pkt:
+                # drain() blocks up to FLUSH_INTERVAL for the first packet
+                # then atomically dequeues everything else without blocking,
+                # preventing the queue from filling under heavy traffic.
+                pkts = await loop.run_in_executor(None, cap.drain, FLUSH_INTERVAL)
+                ready: list[dict] = []
+                for i, pkt in enumerate(pkts):
                     del pkt["id"]
-                    batch.append(pkt)
+                    processed = self._process_packet(pkt)
+                    if processed is not None:
+                        ready.append(processed)
+                    # Yield every 256 packets so the event loop can flush
+                    # WebSocket sends during large traffic bursts.
+                    if i % 256 == 255:
+                        self._broadcast_batch(ready)
+                        ready = []
+                        await asyncio.sleep(0)
+                self._broadcast_batch(ready)
                 now = loop.time()
-                if batch and now - last_flush >= FLUSH_INTERVAL:
-                    for p in batch:
-                        self._emit_packet(p)
-                    batch.clear()
-                    last_flush = now
                 if now - last_tick >= 1.0:
                     self._emit_stats()
                     last_tick = now
@@ -294,26 +350,29 @@ class CaptureManager:
         finally:
             cap.stop()
 
-    async def _real_loop(self, bind_ip: str) -> None:
+    async def _real_loop(self, bind_ip: str, pre_filter=None) -> None:
         cap  = RawCapture(bind_ip)
+        if pre_filter is not None:
+            cap.set_filter(pre_filter)
         cap.start(session_start=_get_session_start())
-        loop       = asyncio.get_event_loop()
-        last_tick  = loop.time()
-        last_flush = loop.time()
-        batch: list[dict] = []
+        loop      = asyncio.get_event_loop()
+        last_tick = loop.time()
         FLUSH_INTERVAL = 0.05
         try:
             while self._running:
-                pkt = await loop.run_in_executor(None, cap.get_packet, 0.05)
-                if pkt:
+                pkts = await loop.run_in_executor(None, cap.drain, FLUSH_INTERVAL)
+                ready: list[dict] = []
+                for i, pkt in enumerate(pkts):
                     del pkt["id"]
-                    batch.append(pkt)
+                    processed = self._process_packet(pkt)
+                    if processed is not None:
+                        ready.append(processed)
+                    if i % 256 == 255:
+                        self._broadcast_batch(ready)
+                        ready = []
+                        await asyncio.sleep(0)
+                self._broadcast_batch(ready)
                 now = loop.time()
-                if batch and now - last_flush >= FLUSH_INTERVAL:
-                    for p in batch:
-                        self._emit_packet(p)
-                    batch.clear()
-                    last_flush = now
                 if now - last_tick >= 1.0:
                     self._emit_stats()
                     last_tick = now

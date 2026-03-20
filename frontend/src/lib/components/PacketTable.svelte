@@ -312,8 +312,8 @@
 <div class="flex flex-col flex-1 min-h-0 font-mono text-xs">
   <!-- Header row -->
   <div
-    class="grid shrink-0 text-[10px] font-semibold text-[var(--nc-fg-4)] uppercase tracking-widest
-           bg-[var(--nc-surface-1)] border-b border-[var(--nc-border)] z-10"
+    class="grid shrink-0 text-[10px] font-semibold text-(--nc-fg-4) uppercase tracking-widest
+           bg-(--nc-surface-1) border-b border-(--nc-border) z-10"
     style="grid-template-columns:{COLS}"
   >
     {#if $columnVisibility.no}
@@ -375,7 +375,7 @@
     on:scroll={handleScroll}
     on:wheel={handleWheel}
     class="flex-1 overflow-x-hidden"
-    style="overflow-y: {$isCapturing && liveFollow ? 'hidden' : 'auto'}"
+    style="overflow-y: {$isCapturing && liveFollow ? 'hidden' : 'auto'}; overflow-anchor: none"
   >
     {#if padTop > 0}
       <div style="height:{padTop}px" aria-hidden="true"></div>
@@ -385,23 +385,23 @@
       <!-- svelte-ignore a11y-click-events-have-key-events -->
       <!-- svelte-ignore a11y-interactive-supports-focus -->
       <div
-        class="grid items-center border-b border-[var(--nc-border-1)] {rowClass(pkt, $selectedPacket?.id === pkt.id)} transition-colors duration-75"
+        class="grid items-center border-b border-(--nc-border-1) {rowClass(pkt, $selectedPacket?.id === pkt.id)} transition-colors duration-75"
         style="grid-template-columns:{COLS}"
         on:click={() => selectAndPin(pkt)}
         role="row"
       >
         {#if $columnVisibility.no}
-          <div class="px-3 py-1.5 text-[var(--nc-fg-4)] tabular-nums">{pkt.id}</div>
+          <div class="px-3 py-1.5 text-(--nc-fg-4) tabular-nums">{pkt.id}</div>
         {/if}
         {#if $columnVisibility.time}
-          <div class="px-3 py-1.5 text-[var(--nc-fg-3)] tabular-nums">
+          <div class="px-3 py-1.5 text-(--nc-fg-3) tabular-nums">
             {$timestampMode === 'absolute' ? (pkt.abs_time ?? pkt.timestamp) : pkt.timestamp}
           </div>
         {/if}
         {#if $columnVisibility.source}
           <!-- svelte-ignore a11y-no-static-element-interactions -->
           <div
-            class="px-3 py-1.5 truncate {hasName(pkt.src_ip, pkt.src_port, $addressBook) || $dnsCache[pkt.src_ip] != null ? 'text-blue-300' : 'text-[var(--nc-fg-1)]'}"
+            class="px-3 py-1.5 truncate {hasName(pkt.src_ip, pkt.src_port, $addressBook) || $dnsCache[pkt.src_ip] != null ? 'text-blue-300' : 'text-(--nc-fg-1)'}"
             on:contextmenu|stopPropagation={(e) => openSrcMenu(e, pkt)}
             title="{pkt.src_ip}{pkt.src_port != null ? ':' + pkt.src_port : ''}"
           >
@@ -417,7 +417,7 @@
         {#if $columnVisibility.destination}
           <!-- svelte-ignore a11y-no-static-element-interactions -->
           <div
-            class="px-3 py-1.5 truncate {hasName(pkt.dst_ip, pkt.dst_port, $addressBook) || $dnsCache[pkt.dst_ip] != null ? 'text-blue-300' : 'text-[var(--nc-fg-1)]'}"
+            class="px-3 py-1.5 truncate {hasName(pkt.dst_ip, pkt.dst_port, $addressBook) || $dnsCache[pkt.dst_ip] != null ? 'text-blue-300' : 'text-(--nc-fg-1)'}"
             on:contextmenu|stopPropagation={(e) => openDstMenu(e, pkt)}
             title="{pkt.dst_ip}{pkt.dst_port != null ? ':' + pkt.dst_port : ''}"
           >
@@ -443,14 +443,14 @@
           </div>
         {/if}
         {#if $columnVisibility.length}
-          <div class="px-3 py-1.5 text-[var(--nc-fg-3)] tabular-nums">{pkt.length}</div>
+          <div class="px-3 py-1.5 text-(--nc-fg-3) tabular-nums">{pkt.length}</div>
         {/if}
         {#if $columnVisibility.info}
-          <div class="px-3 py-1.5 text-[var(--nc-fg-2)] truncate">{pkt.info}</div>
+          <div class="px-3 py-1.5 text-(--nc-fg-2) truncate">{pkt.info}</div>
         {/if}
       </div>
     {:else}
-      <div class="flex items-center justify-center h-32 text-[var(--nc-fg-5)] select-none">
+      <div class="flex items-center justify-center h-32 text-(--nc-fg-5) select-none">
         {#if $isCapturing}Waiting for packets…{:else}Press Start to begin capturing.{/if}
       </div>
     {/each}
@@ -480,7 +480,7 @@
 
   <!-- Footer: packet count when stopped with data -->
   {#if !$isCapturing && total > 0}
-    <div class="shrink-0 text-center py-1 text-[10px] text-[var(--nc-fg-5)] bg-[var(--nc-surface)] border-t border-[var(--nc-border-1)] select-none">
+    <div class="shrink-0 text-center py-1 text-[10px] text-(--nc-fg-5) bg-(--nc-surface) border-t border-(--nc-border-1) select-none">
       {total.toLocaleString()} packets — scroll to browse
     </div>
   {/if}

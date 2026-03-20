@@ -76,16 +76,16 @@
   const protoLabel = anchor.protocol.split('/')[0]
 </script>
 
-<div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60">
+<div class="fixed inset-0 z-100 flex items-center justify-center bg-black/60">
   <div
-    class="flex flex-col rounded-lg shadow-2xl bg-[var(--nc-surface-1)] border border-[var(--nc-border)]"
+    class="flex flex-col rounded-lg shadow-2xl bg-(--nc-surface-1) border border-(--nc-border)"
     style="width: 760px; height: 560px; min-width: 480px; min-height: 320px; resize: both; overflow: hidden;"
   >
     <!-- Header -->
-    <div class="flex items-center justify-between px-5 py-3 border-b border-[var(--nc-border)] shrink-0">
+    <div class="flex items-center justify-between px-5 py-3 border-b border-(--nc-border) shrink-0">
       <div>
-        <div class="font-semibold text-sm text-[var(--nc-fg)]">Follow {protoLabel} Stream</div>
-        <div class="text-[10px] text-[var(--nc-fg-4)] mt-0.5 font-mono">
+        <div class="font-semibold text-sm text-(--nc-fg)">Follow {protoLabel} Stream</div>
+        <div class="text-[10px] text-(--nc-fg-4) mt-0.5 font-mono">
           {anchor.src_ip}{anchor.src_port != null ? `:${anchor.src_port}` : ''} ↔
           {anchor.dst_ip}{anchor.dst_port != null ? `:${anchor.dst_port}` : ''}
           · {streamPackets.length} packets
@@ -93,20 +93,21 @@
       </div>
       <div class="flex items-center gap-3">
         <!-- Mode toggle -->
-        <div class="flex rounded border border-[var(--nc-border)] overflow-hidden text-[10px]">
+        <div class="flex rounded border border-(--nc-border) overflow-hidden text-[10px]">
           <button on:click={() => mode = 'ascii'}
             class="px-2 py-0.5 transition-colors
-                   {mode === 'ascii' ? 'bg-blue-700 text-white' : 'text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)]'}">
+                   {mode === 'ascii' ? 'bg-blue-700 text-white' : 'text-(--nc-fg-3) hover:bg-(--nc-surface-2)'}">
             ASCII
           </button>
           <button on:click={() => mode = 'hex'}
-            class="px-2 py-0.5 transition-colors border-l border-[var(--nc-border)]
-                   {mode === 'hex' ? 'bg-blue-700 text-white' : 'text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)]'}">
+            class="px-2 py-0.5 transition-colors border-l border-(--nc-border)
+                   {mode === 'hex' ? 'bg-blue-700 text-white' : 'text-(--nc-fg-3) hover:bg-(--nc-surface-2)'}">
             Hex dump
           </button>
         </div>
         <button on:click={() => dispatch('close')}
-          class="text-[var(--nc-fg-4)] hover:text-[var(--nc-fg)] transition-colors p-1">
+          aria-label="Close"
+          class="text-(--nc-fg-4) hover:text-(--nc-fg) transition-colors p-1">
           <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
             <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"/>
           </svg>
@@ -120,23 +121,23 @@
         {@const payload = extractPayload(pkt)}
         {#if payload && payload.length > 0}
           <div class="rounded px-2 py-1.5 {isForward(pkt) ? 'bg-blue-900/30 border-l-2 border-blue-500' : 'bg-rose-900/20 border-l-2 border-rose-500'}">
-            <div class="text-[10px] text-[var(--nc-fg-4)] mb-1">
+            <div class="text-[10px] text-(--nc-fg-4) mb-1">
               #{pkt.id} · {pkt.timestamp} · {pkt.src_ip}{pkt.src_port != null ? `:${pkt.src_port}` : ''} → {pkt.dst_ip}{pkt.dst_port != null ? `:${pkt.dst_port}` : ''} · {payload.length} bytes
             </div>
             {#if mode === 'ascii'}
-              <pre class="whitespace-pre-wrap break-all text-[var(--nc-fg-2)] leading-relaxed">{toAscii(payload)}</pre>
+              <pre class="whitespace-pre-wrap break-all text-(--nc-fg-2) leading-relaxed">{toAscii(payload)}</pre>
             {:else}
-              <pre class="whitespace-pre text-[var(--nc-fg-2)] leading-relaxed text-[10px]">{toHexDump(payload)}</pre>
+              <pre class="whitespace-pre text-(--nc-fg-2) leading-relaxed text-[10px]">{toHexDump(payload)}</pre>
             {/if}
           </div>
         {/if}
       {:else}
-        <div class="text-center text-[var(--nc-fg-5)] py-8">No stream packets found.</div>
+        <div class="text-center text-(--nc-fg-5) py-8">No stream packets found.</div>
       {/each}
     </div>
 
     <!-- Footer -->
-    <div class="shrink-0 flex items-center justify-between px-5 py-3 border-t border-[var(--nc-border)] text-xs text-[var(--nc-fg-4)]">
+    <div class="shrink-0 flex items-center justify-between px-5 py-3 border-t border-(--nc-border) text-xs text-(--nc-fg-4)">
       <span>
         <span class="inline-block w-2 h-2 rounded-sm bg-blue-500 mr-1"></span>
         {anchor.src_ip}{anchor.src_port != null ? `:${anchor.src_port}` : ''} (initiator)
@@ -145,7 +146,7 @@
         {anchor.dst_ip}{anchor.dst_port != null ? `:${anchor.dst_port}` : ''} (responder)
       </span>
       <button on:click={() => dispatch('close')}
-        class="px-3 py-1 rounded border border-[var(--nc-border)] text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] transition-colors">
+        class="px-3 py-1 rounded border border-(--nc-border) text-(--nc-fg-2) hover:bg-(--nc-surface-2) transition-colors">
         Close
       </button>
     </div>

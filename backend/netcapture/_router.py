@@ -274,10 +274,16 @@ def create_router(
             from .interpreters import find_interpreter
             for p in imported:
                 payload = p.pop("_payload", None)
+                # _header_bytes/_payload_offset stay in p during interpreter call
                 if payload:
                     frame = find_interpreter(p, payload)
                     if frame is not None:
-                        p["decoded"] = frame.to_dict()
+                        decoded = frame.to_dict()
+                        if p.get("_payload_offset"):
+                            decoded["payloadOffset"] = p["_payload_offset"]
+                        p["decoded"] = decoded
+                p.pop("_header_bytes",   None)
+                p.pop("_payload_offset", None)
 
             manager.reset()
             for i, p in enumerate(imported, start=1):

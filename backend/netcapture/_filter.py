@@ -237,6 +237,27 @@ def filter_eval(node, pkt: dict) -> bool:
     return False
 
 
+def filter_uses_decoded(node) -> bool:
+    """
+    Return True if the filter AST references interpreter or decoded.* fields.
+
+    When True the interpreter must run *before* the filter, so the filter
+    cannot be safely applied as a pre-filter in the capture thread (where
+    decoded fields have not yet been populated).
+    """
+    if node is None:
+        return False
+    kind = node[0]
+    if kind in ('and', 'or'):
+        return filter_uses_decoded(node[1]) or filter_uses_decoded(node[2])
+    if kind == 'not':
+        return filter_uses_decoded(node[1])
+    if kind == 'cmp':
+        field = node[1]
+        return field == 'interpreter' or field.startswith('decoded.')
+    return False
+
+
 def parse_filter(filter_str: str):
     """Parse a filter string into an AST node, or return None on error."""
     trimmed = filter_str.strip()

@@ -380,10 +380,20 @@
     }
   }
 
-  function dragEnd() { dragging = false; decodedDragging = false }
+  function dragEnd() {
+    dragging = false
+    if (decodedDragging) {
+      localStorage.setItem(_DECODED_WIDTH_KEY, String(decodedWidth))
+    }
+    decodedDragging = false
+  }
 
   // ── Decoded panel width drag (horizontal) ──────────────────────────────────
-  let decodedWidth:      number  = 224   // default = w-56
+  const _DECODED_WIDTH_KEY = 'nc:decodedWidth'
+  let decodedWidth:      number  = (() => {
+    const saved = parseInt(localStorage.getItem(_DECODED_WIDTH_KEY) ?? '', 10)
+    return isNaN(saved) ? 224 : Math.max(120, Math.min(600, saved))
+  })()
   let decodedDragging:   boolean = false
   let decodedDragStartX: number  = 0
   let decodedDragStartW: number  = 0
@@ -400,31 +410,31 @@
 
 {#if p}
 <div
-  class="shrink-0 flex flex-col border-t border-[var(--nc-border)] bg-[var(--nc-surface-1)] font-mono text-xs"
+  class="shrink-0 flex flex-col border-t border-(--nc-border) bg-(--nc-surface-1) font-mono text-xs"
   style="height:{height}px"
 >
   <!-- ── Drag handle ─────────────────────────────────────────────────────── -->
   <button
-    class="h-1.5 w-full shrink-0 flex items-center justify-center bg-[var(--nc-surface)]
-           cursor-ns-resize hover:bg-[var(--nc-surface-2)] transition-colors group border-none p-0"
+    class="h-1.5 w-full shrink-0 flex items-center justify-center bg-(--nc-surface)
+           cursor-ns-resize hover:bg-(--nc-surface-2) transition-colors group border-none p-0"
     on:mousedown={dragStart}
     aria-label="Drag to resize panel"
   >
-    <div class="w-10 h-0.5 rounded-full bg-[var(--nc-border)] group-hover:bg-[var(--nc-fg-3)] transition-colors"></div>
+    <div class="w-10 h-0.5 rounded-full bg-(--nc-border) group-hover:bg-(--nc-fg-3) transition-colors"></div>
   </button>
   <!-- ── Header ──────────────────────────────────────────────────────────── -->
-  <div class="flex items-center gap-2 px-3 py-1.5 bg-[var(--nc-surface)] border-b border-[var(--nc-border)] shrink-0 flex-wrap">
-    <span class="text-[var(--nc-fg-4)] text-[10px] uppercase tracking-wider">Frame #{p.id}</span>
+  <div class="flex items-center gap-2 px-3 py-1.5 bg-(--nc-surface) border-b border-(--nc-border) shrink-0 flex-wrap">
+    <span class="text-(--nc-fg-4) text-[10px] uppercase tracking-wider">Frame #{p.id}</span>
     <span class="px-1.5 py-0.5 rounded text-[10px] font-bold text-white"
       style={badge(p.protocol)}>{p.protocol}</span>
-    <span class="text-[var(--nc-fg-4)]">{p.abs_time ?? p.timestamp}</span>
+    <span class="text-(--nc-fg-4)">{p.abs_time ?? p.timestamp}</span>
 
     <!-- Track mode controls -->
     {#if $trackMode}
       <div class="flex items-center gap-1.5 ml-1">
         <button
-          class="text-[10px] px-1.5 py-0.5 rounded border border-[var(--nc-border)] text-[var(--nc-fg-3)]
-                 hover:border-[var(--nc-status-err)] hover:text-[var(--nc-status-err)] transition-colors"
+          class="text-[10px] px-1.5 py-0.5 rounded border border-(--nc-border) text-(--nc-fg-3)
+                 hover:border-(--nc-status-err) hover:text-(--nc-status-err) transition-colors"
           on:click={exitTrack}
         >Stop</button>
         <div class="w-1.5 h-1.5 rounded-full {TRACK_DOT[trackState]}"></div>
@@ -433,8 +443,8 @@
       </div>
     {:else}
       <button
-        class="text-[10px] px-1.5 py-0.5 ml-1 rounded border border-[var(--nc-border)] text-[var(--nc-fg-3)]
-               hover:border-[var(--nc-status-ok)] hover:text-[var(--nc-status-ok)] transition-colors"
+        class="text-[10px] px-1.5 py-0.5 ml-1 rounded border border-(--nc-border) text-(--nc-fg-3)
+               hover:border-(--nc-status-ok) hover:text-(--nc-status-ok) transition-colors"
         on:click={enterTrack}
         title="Auto-select new packets matching this type"
       >Track</button>
@@ -455,18 +465,18 @@
           >
             <div class="w-2 h-2 rounded-sm border shrink-0 transition-all"
               style="background:{on ? l.bg : 'transparent'}; border-color:color-mix(in srgb,{l.dot} 53%, transparent)"></div>
-            <span class="text-[10px] text-[var(--nc-fg-2)]">{l.label}</span>
+            <span class="text-[10px] text-(--nc-fg-2)">{l.label}</span>
           </button>
         {/each}
       </div>
     {:else}
-      <span class="text-[var(--nc-fg-5)] italic ml-2 text-[10px]">
+      <span class="text-(--nc-fg-5) italic ml-2 text-[10px]">
         raw bytes unavailable — backend capture required
       </span>
     {/if}
 
     <button
-      class="ml-auto text-[var(--nc-fg-5)] hover:text-[var(--nc-fg-2)] transition-colors px-1"
+      class="ml-auto text-(--nc-fg-5) hover:text-(--nc-fg-2) transition-colors px-1"
       on:click={() => { exitTrack(); selectedPacket.set(null) }}
     >✕</button>
   </div>
@@ -475,25 +485,25 @@
   <div class="flex flex-1 min-h-0">
 
     <!-- Protocol tree (left panel) -->
-    <div class="w-56 shrink-0 border-r border-[var(--nc-border)] overflow-y-auto">
+    <div class="w-56 shrink-0 border-r border-(--nc-border) overflow-y-auto">
       {#each tree as sec}
         <div>
           <button
-            class="flex w-full items-center gap-1 px-2 py-0.5 hover:bg-[var(--nc-surface-2)] transition-colors text-left"
+            class="flex w-full items-center gap-1 px-2 py-0.5 hover:bg-(--nc-surface-2) transition-colors text-left"
             on:click={() => toggle(sec.id)}
           >
-            <span class="text-[var(--nc-fg-5)] text-[10px] w-3 shrink-0">{open(sec.id) ? '▼' : '▶'}</span>
+            <span class="text-(--nc-fg-5) text-[10px] w-3 shrink-0">{open(sec.id) ? '▼' : '▶'}</span>
             <span class="{sec.color} font-semibold truncate text-[11px]">{sec.label}</span>
           </button>
           {#if open(sec.id)}
-            <div class="ml-4 border-l border-[var(--nc-border-2)] pl-2 pb-0.5">
+            <div class="ml-4 border-l border-(--nc-border-2) pl-2 pb-0.5">
               {#each sec.fields as [label, value]}
                 {@const prevVal     = prevTreeMap.get(`${sec.id}:${label}`)}
                 {@const treeChanged = $trackMode && prevVal !== undefined && prevVal !== value}
                 <div class="flex gap-1 py-px leading-4"
                   style={treeChanged ? 'background:color-mix(in srgb,var(--nc-status-err) 18%,transparent)' : ''}>
-                  <span class="text-[var(--nc-fg-3)] shrink-0 w-[4.5rem] truncate">{label}</span>
-                  <span class="text-[var(--nc-fg-1)] break-all">{value}</span>
+                  <span class="text-(--nc-fg-3) shrink-0 w-18 truncate">{label}</span>
+                  <span class="text-(--nc-fg-1) break-all">{value}</span>
                 </div>
               {/each}
             </div>
@@ -504,19 +514,27 @@
 
     <!-- Decoded panel — only shown when an interpreter matches -->
     {#if decoded}
-      <div class="shrink-0 border-r border-[var(--nc-border)] overflow-y-auto flex flex-col"
+      <div class="shrink-0 border-r border-(--nc-border) overflow-y-auto flex flex-col"
         style="width:{decodedWidth}px">
         <!-- Header -->
-        <div class="px-2 py-1 bg-[var(--nc-surface)] border-b border-[var(--nc-border)] shrink-0
-                    flex items-center gap-1.5">
-          <span class="text-[var(--nc-fg-5)] text-[10px]">&#9670;</span>
-          <span class="text-[var(--nc-fg-2)] text-[10px] font-semibold uppercase tracking-wider">
+        <div class="px-2 py-1 bg-(--nc-surface) border-b border-(--nc-border) shrink-0
+                    flex items-center gap-1.5 min-w-0">
+          <span class="text-(--nc-fg-5) text-[10px] shrink-0">&#9670;</span>
+          <span class="text-(--nc-fg-2) text-[10px] font-semibold uppercase tracking-wider truncate">
             {decoded.interpreterName}
           </span>
+          {#if decoded.payloadOffset != null}
+            <span
+              class="ml-auto shrink-0 text-(--nc-fg-5) text-[9px] font-mono
+                     bg-(--nc-surface-2) rounded px-1 py-px"
+              title="Byte offset in the raw frame where this interpreter's payload starts">
+              @ 0x{decoded.payloadOffset.toString(16).padStart(2, '0')}
+            </span>
+          {/if}
         </div>
 
         {#if decoded.error}
-          <div class="px-2 py-1.5 text-[var(--nc-status-err)] text-[10px] italic">
+          <div class="px-2 py-1.5 text-(--nc-status-err) text-[10px] italic">
             {decoded.error}
           </div>
         {:else}
@@ -524,12 +542,15 @@
             {#each decoded.fields as f}
               {@const changed = diffChanged.has(f.key)}
               {@const isNew   = diffNew.has(f.key)}
-              <div class="flex items-baseline gap-1 px-2 py-0.5 border-b border-[var(--nc-border-1)] last:border-0"
+              <div class="flex items-baseline gap-1 px-2 py-0.5 border-b border-(--nc-border-1) last:border-0"
                 style={changed ? 'background:color-mix(in srgb,var(--nc-status-err) 18%,transparent)'
                       : isNew   ? 'background:color-mix(in srgb,var(--nc-status-ok)   14%,transparent)'
                       : ''}>
-                <span class="text-[var(--nc-fg-3)] text-[10px] shrink-0 w-[4.5rem] truncate">{f.key}</span>
+                <span class="text-(--nc-fg-3) text-[10px] shrink-0 w-18 truncate"
+                  title={f.key}>{f.key}</span>
                 <FieldValue value={f.value} />
+                <span class="text-(--nc-fg-5) text-[9px] shrink-0 ml-auto font-mono"
+                  title="Field type">{f.type}</span>
               </div>
             {/each}
           </div>
@@ -538,7 +559,7 @@
 
       <!-- Drag handle between decoded and hex panels -->
       <button
-        class="w-1 shrink-0 cursor-col-resize hover:bg-blue-500/30 transition-colors bg-[var(--nc-border)] border-none p-0"
+        class="w-1 shrink-0 cursor-col-resize hover:bg-blue-500/30 transition-colors bg-(--nc-border) border-none p-0"
         on:mousedown={decodedDragStart}
         aria-label="Resize decoded panel"
       ></button>
@@ -552,7 +573,7 @@
             {#each rows as row}
               <tr>
                 <!-- Offset -->
-                <td class="text-[var(--nc-fg-5)] select-none pr-3 text-right whitespace-nowrap">
+                <td class="text-(--nc-fg-5) select-none pr-3 text-right whitespace-nowrap">
                   {row.off.toString(16).padStart(4, '0')}
                 </td>
 
@@ -582,7 +603,7 @@
                 {/each}
 
                 <!-- ASCII column -->
-                <td class="pl-4 text-[var(--nc-fg-4)] select-none whitespace-pre tracking-wide">
+                <td class="pl-4 text-(--nc-fg-4) select-none whitespace-pre tracking-wide">
                   {#each row.cells as cell, j}
                     {#if cell}
                       {@const on      = cell.layer ? activeLayers[cell.layer] ?? true : true}
@@ -601,7 +622,7 @@
           </tbody>
         </table>
       {:else}
-        <div class="flex items-center justify-center h-full text-[var(--nc-fg-5)] italic select-none">
+        <div class="flex items-center justify-center h-full text-(--nc-fg-5) italic select-none">
           No raw bytes — start a backend capture to inspect packet data.
         </div>
       {/if}

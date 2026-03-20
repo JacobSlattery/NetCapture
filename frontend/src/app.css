@@ -1,6 +1,7 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* Safelist: dynamically-constructed classes that Tailwind can't detect statically */
+@source inline("hover:bg-[var(--nc-row-hover)] hover:border-blue-400/60");
 
 /* ── Theme tokens ─────────────────────────────────────────────────────────── */
 :root {

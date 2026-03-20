@@ -355,7 +355,7 @@
   let focused       = false
   let selectedIdx   = -1
 
-  $: if (!focused) pendingFilter = $captureFilter
+  $: pendingFilter = $captureFilter
   $: filterResult      = parseFilter(pendingFilter)
   $: filterEmpty       = !pendingFilter.trim()
   $: filterBorderColor = filterEmpty
@@ -448,7 +448,7 @@
 <input bind:this={pcapFileInput}     type="file" accept=".pcap,.pcapng" class="hidden" on:change={handlePcapImport} />
 <input bind:this={csvFileInput}      type="file" accept=".csv"           class="hidden" on:change={handleCsvImport} />
 
-<div class="flex flex-col bg-[var(--nc-surface-1)] border-b border-[var(--nc-border)] select-none shrink-0">
+<div class="flex flex-col bg-(--nc-surface-1) border-b border-(--nc-border) select-none shrink-0">
 
   <!-- ── Row 1: brand, controls ──────────────────────────────────────────── -->
   <div class="flex items-center gap-2 px-4 py-2">
@@ -456,14 +456,14 @@
     <div class="flex items-center gap-2 mr-1">
       <div class="w-2.5 h-2.5 rounded-full {statusPulse ? 'animate-pulse' : ''}"
         style={statusDotStyle}></div>
-      <span class="text-[var(--nc-fg)] font-bold text-base tracking-tight">NetCapture</span>
+      <span class="text-(--nc-fg) font-bold text-base tracking-tight">NetCapture</span>
     </div>
 
     <select
       value={selectionKey}
       on:change={handleSelectionChange}
       disabled={$isCapturing}
-      class="bg-[var(--nc-surface)] text-[var(--nc-fg-1)] border border-[var(--nc-border)] rounded px-2 py-1 text-xs
+      class="bg-(--nc-surface) text-(--nc-fg-1) border border-(--nc-border) rounded px-2 py-1 text-xs
              w-72 focus:outline-none focus:border-blue-500 disabled:opacity-40 cursor-pointer"
     >
       <optgroup label="Interfaces">
@@ -487,7 +487,7 @@
           disabled={$isCapturing}
           placeholder="BPF filter (e.g. tcp port 443)"
           title="Kernel-level BPF capture filter. Filters packets before they reach the app."
-          class="bg-[var(--nc-surface)] text-[var(--nc-fg-1)] border border-[var(--nc-border)] rounded-l px-2 py-1 text-xs
+          class="bg-(--nc-surface) text-(--nc-fg-1) border border-(--nc-border) rounded-l px-2 py-1 text-xs
                  w-64 focus:outline-none focus:border-blue-500 disabled:opacity-40 font-mono"
         />
         <!-- BPF presets button -->
@@ -495,24 +495,24 @@
           on:click|stopPropagation={() => { showBpfPresets = !showBpfPresets }}
           disabled={$isCapturing}
           title="BPF filter presets"
-          class="flex items-center px-1.5 py-1 border border-l-0 border-[var(--nc-border)] rounded-r
-                 bg-[var(--nc-surface)] hover:bg-[var(--nc-surface-2)] text-[var(--nc-fg-3)]
-                 hover:text-[var(--nc-fg-1)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+          class="flex items-center px-1.5 py-1 border border-l-0 border-(--nc-border) rounded-r
+                 bg-(--nc-surface) hover:bg-(--nc-surface-2) text-(--nc-fg-3)
+                 hover:text-(--nc-fg-1) transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
           <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd"/>
           </svg>
         </button>
         {#if showBpfPresets}
-          <div class="absolute top-full left-0 mt-1 z-50 min-w-[200px]
-                      bg-[var(--nc-surface-1)] border border-[var(--nc-border)] rounded shadow-lg py-1"
+          <div class="absolute top-full left-0 mt-1 z-50 min-w-50
+                      bg-(--nc-surface-1) border border-(--nc-border) rounded shadow-lg py-1"
                on:click|stopPropagation on:keydown|stopPropagation role="none">
             {#each BPF_PRESETS as preset}
               <button
                 on:click={() => { bpfFilter.set(preset.value); showBpfPresets = false }}
                 class="w-full text-left px-3 py-1.5 text-xs flex items-center justify-between gap-4
-                       text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+                       text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
                 <span>{preset.label}</span>
-                <span class="font-mono text-[var(--nc-fg-4)] text-[10px]">{preset.value}</span>
+                <span class="font-mono text-(--nc-fg-4) text-[10px]">{preset.value}</span>
               </button>
             {/each}
           </div>
@@ -538,9 +538,9 @@
       </button>
     {/if}
 
-    <button on:click={() => dispatch('clear')} disabled={$isCapturing}
-      class="flex items-center gap-1.5 bg-[var(--nc-surface-2)] hover:bg-[var(--nc-border)] text-[var(--nc-fg-1)]
-             px-3 py-1 rounded text-xs border border-[var(--nc-border)] transition-colors disabled:opacity-40">
+    <button on:click={() => { bpfFilter.set(''); dispatch('clear') }} disabled={$isCapturing}
+      class="flex items-center gap-1.5 bg-(--nc-surface-2) hover:bg-(--nc-border) text-(--nc-fg-1)
+             px-3 py-1 rounded text-xs border border-(--nc-border) transition-colors disabled:opacity-40">
       <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
         <path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clip-rule="evenodd"/>
       </svg>
@@ -559,8 +559,8 @@
         on:click|stopPropagation={() => { showSettings = !showSettings; showPresets = false }}
         class="flex items-center px-1 py-1 rounded border transition-colors
                {showSettings
-                 ? 'bg-[var(--nc-surface-2)] border-[var(--nc-border)] text-[var(--nc-fg)]'
-                 : 'bg-[var(--nc-surface)] border-[var(--nc-border)] text-[var(--nc-fg-3)] hover:text-[var(--nc-fg)] hover:bg-[var(--nc-surface-2)]'}"
+                 ? 'bg-(--nc-surface-2) border-(--nc-border) text-(--nc-fg)'
+                 : 'bg-(--nc-surface) border-(--nc-border) text-(--nc-fg-3) hover:text-(--nc-fg) hover:bg-(--nc-surface-2)'}"
         title="Settings"
       >
         <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
@@ -571,7 +571,7 @@
       {#if showSettings}
         <div
           class="absolute right-0 top-full mt-1 z-50 w-64 max-h-[80vh] overflow-y-auto
-                 bg-[var(--nc-surface-1)] border border-[var(--nc-border)] rounded shadow-xl"
+                 bg-(--nc-surface-1) border border-(--nc-border) rounded shadow-xl"
           role="none"
           on:click|stopPropagation
           on:keydown|stopPropagation
@@ -579,14 +579,14 @@
 
           <!-- ── Recording ──────────────────────────────────────────────── -->
           <div class="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider
-                      text-[var(--nc-fg-4)] border-b border-[var(--nc-border-1)]">
+                      text-(--nc-fg-4) border-b border-(--nc-border-1)">
             Recording
           </div>
           <!-- Export group -->
           <button on:click={openExportMenu}
             class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs transition-colors
-                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)]
-                   {exportOpen ? 'bg-[var(--nc-surface-2)] text-[var(--nc-fg)]' : ''}">
+                   text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg)
+                   {exportOpen ? 'bg-(--nc-surface-2) text-(--nc-fg)' : ''}">
             <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/>
               <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
@@ -600,9 +600,9 @@
           <!-- Import group -->
           <button on:click={openImportMenu} disabled={$isCapturing}
             class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs transition-colors
-                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)]
+                   text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg)
                    disabled:opacity-40 disabled:cursor-not-allowed
-                   {importOpen ? 'bg-[var(--nc-surface-2)] text-[var(--nc-fg)]' : ''}">
+                   {importOpen ? 'bg-(--nc-surface-2) text-(--nc-fg)' : ''}">
             <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path d="M9.25 13.25a.75.75 0 001.5 0V4.636l2.955 3.129a.75.75 0 001.09-1.03l-4.25-4.5a.75.75 0 00-1.09 0l-4.25 4.5a.75.75 0 101.09 1.03L9.25 4.636v8.614z"/>
               <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
@@ -615,23 +615,23 @@
 
           <!-- ── Addresses ──────────────────────────────────────────────── -->
           <div class="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider
-                      text-[var(--nc-fg-4)] border-t border-b border-[var(--nc-border-1)] mt-1">
+                      text-(--nc-fg-4) border-t border-b border-(--nc-border-1) mt-1">
             Addresses
           </div>
           <button on:click={() => { showAddressBook = true; showSettings = false }}
             class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+                   text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
             <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path d="M10 2a.75.75 0 01.75.75v.258a33.186 33.186 0 016.668.83.75.75 0 01-.336 1.461 31.28 31.28 0 00-1.103-.232l1.702 7.545a.75.75 0 01-.387.832A4.981 4.981 0 0115 14c-.825 0-1.606-.2-2.294-.556a.75.75 0 01-.387-.832l1.77-7.849a31.743 31.743 0 00-3.339-.254v11.505a20.415 20.415 0 013.78.501.75.75 0 11-.339 1.46 18.927 18.927 0 00-3.441-.456V17.5a.75.75 0 01-1.5 0v-.921a18.927 18.927 0 00-3.441.456.75.75 0 11-.339-1.46 20.415 20.415 0 013.78-.501V4.509a31.743 31.743 0 00-3.339.254l1.77 7.849a.75.75 0 01-.387.832A4.979 4.979 0 015 14a4.981 4.981 0 01-2.294-.556.75.75 0 01-.387-.832l1.702-7.545c-.37.07-.738.146-1.103.232a.75.75 0 01-.336-1.46 33.186 33.186 0 016.668-.83V2.75A.75.75 0 0110 2z"/>
             </svg>
             Manage Addresses
             {#if $addressBook.length}
-              <span class="ml-auto text-[10px] text-[var(--nc-fg-4)]">{$addressBook.length}</span>
+              <span class="ml-auto text-[10px] text-(--nc-fg-4)">{$addressBook.length}</span>
             {/if}
           </button>
           <button on:click={() => { exportAddrBook(); showSettings = false }}
             class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors
+                   text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors
                    disabled:opacity-40" disabled={!$addressBook.length}>
             <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/>
@@ -641,7 +641,7 @@
           </button>
           <button on:click={() => { addrBookFileInput.click(); showSettings = false }}
             class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+                   text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
             <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path d="M9.25 13.25a.75.75 0 001.5 0V4.636l2.955 3.129a.75.75 0 001.09-1.03l-4.25-4.5a.75.75 0 00-1.09 0l-4.25 4.5a.75.75 0 101.09 1.03L9.25 4.636v8.614z"/>
               <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
@@ -651,23 +651,23 @@
 
           <!-- ── Filter Presets ──────────────────────────────────────────── -->
           <div class="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider
-                      text-[var(--nc-fg-4)] border-t border-b border-[var(--nc-border-1)] mt-1">
+                      text-(--nc-fg-4) border-t border-b border-(--nc-border-1) mt-1">
             Filter Presets
           </div>
           <button on:click={() => { showPresetEditor = true; showSettings = false }}
             class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+                   text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
             <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path fill-rule="evenodd" d="M2 4.75A.75.75 0 012.75 4h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 4.75zm0 10.5a.75.75 0 01.75-.75h7.5a.75.75 0 010 1.5h-7.5a.75.75 0 01-.75-.75zM2 10a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 10z" clip-rule="evenodd"/>
             </svg>
             Manage Presets
             {#if userPresets.length}
-              <span class="ml-auto text-[10px] text-[var(--nc-fg-4)]">{userPresets.length}</span>
+              <span class="ml-auto text-[10px] text-(--nc-fg-4)">{userPresets.length}</span>
             {/if}
           </button>
           <button on:click={() => { exportPresets(); showSettings = false }}
             class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors
+                   text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors
                    disabled:opacity-40" disabled={!userPresets.length}>
             <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/>
@@ -677,7 +677,7 @@
           </button>
           <button on:click={() => { presetFileInput.click(); showSettings = false }}
             class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-                   text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+                   text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
             <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path d="M9.25 13.25a.75.75 0 001.5 0V4.636l2.955 3.129a.75.75 0 001.09-1.03l-4.25-4.5a.75.75 0 00-1.09 0l-4.25 4.5a.75.75 0 101.09 1.03L9.25 4.636v8.614z"/>
               <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
@@ -687,104 +687,104 @@
 
           <!-- ── Capture ────────────────────────────────────────────────── -->
           <div class="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider
-                      text-[var(--nc-fg-4)] border-t border-b border-[var(--nc-border-1)] mt-1">
+                      text-(--nc-fg-4) border-t border-b border-(--nc-border-1) mt-1">
             Capture
           </div>
           <!-- Buffer size -->
-          <div class="flex items-center justify-between px-3 py-2 text-xs text-[var(--nc-fg-2)]">
+          <div class="flex items-center justify-between px-3 py-2 text-xs text-(--nc-fg-2)">
             <span title="Max packets kept in the rolling buffer">Buffer size</span>
             <div class="flex items-center gap-1">
               <input type="number" min="100" max="1000000" step="1000"
                 value={$maxPackets}
                 on:change={handleMaxPacketsChange}
-                class="w-20 bg-[var(--nc-surface)] text-[var(--nc-fg)] border border-[var(--nc-border)]
+                class="w-20 bg-(--nc-surface) text-(--nc-fg) border border-(--nc-border)
                        rounded px-1.5 py-0.5 text-xs text-right focus:outline-none focus:border-blue-500" />
-              <span class="text-[var(--nc-fg-4)]">pkts</span>
+              <span class="text-(--nc-fg-4)">pkts</span>
             </div>
           </div>
           <!-- Ring buffer toggle -->
-          <div class="flex items-center justify-between px-3 py-2 text-xs text-[var(--nc-fg-2)]">
+          <div class="flex items-center justify-between px-3 py-2 text-xs text-(--nc-fg-2)">
             <span title="Keep newest N packets (On) or keep all (Off)">Ring buffer</span>
-            <div class="flex rounded border border-[var(--nc-border)] overflow-hidden text-[10px]">
+            <div class="flex rounded border border-(--nc-border) overflow-hidden text-[10px]">
               <button on:click={() => ringBuffer.set(true)}
                 class="px-2 py-0.5 transition-colors
-                       {$ringBuffer ? 'bg-blue-700 text-white' : 'text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)]'}">
+                       {$ringBuffer ? 'bg-blue-700 text-white' : 'text-(--nc-fg-3) hover:bg-(--nc-surface-2)'}">
                 On
               </button>
               <button on:click={() => ringBuffer.set(false)}
-                class="px-2 py-0.5 transition-colors border-l border-[var(--nc-border)]
-                       {!$ringBuffer ? 'bg-blue-700 text-white' : 'text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)]'}">
+                class="px-2 py-0.5 transition-colors border-l border-(--nc-border)
+                       {!$ringBuffer ? 'bg-blue-700 text-white' : 'text-(--nc-fg-3) hover:bg-(--nc-surface-2)'}">
                 Off
               </button>
             </div>
           </div>
           <!-- Auto-stop after N packets -->
-          <div class="flex items-center justify-between px-3 py-2 text-xs text-[var(--nc-fg-2)]">
+          <div class="flex items-center justify-between px-3 py-2 text-xs text-(--nc-fg-2)">
             <span title="Automatically stop capture after N packets (0 = unlimited)">Auto-stop after</span>
             <div class="flex items-center gap-1">
               <input type="number" min="0" max="10000000" step="1000"
                 value={$capturePacketLimit}
                 on:change={handlePacketLimitChange}
-                class="w-20 bg-[var(--nc-surface)] text-[var(--nc-fg)] border border-[var(--nc-border)]
+                class="w-20 bg-(--nc-surface) text-(--nc-fg) border border-(--nc-border)
                        rounded px-1.5 py-0.5 text-xs text-right focus:outline-none focus:border-blue-500" />
-              <span class="text-[var(--nc-fg-4)]">pkts</span>
+              <span class="text-(--nc-fg-4)">pkts</span>
             </div>
           </div>
 
           <!-- ── Display ──────────────────────────────────────────────────── -->
           <div class="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider
-                      text-[var(--nc-fg-4)] border-t border-b border-[var(--nc-border-1)] mt-1">
+                      text-(--nc-fg-4) border-t border-b border-(--nc-border-1) mt-1">
             Display
           </div>
           <!-- Timestamp format toggle -->
-          <div class="flex items-center justify-between px-3 py-2 text-xs text-[var(--nc-fg-2)]">
+          <div class="flex items-center justify-between px-3 py-2 text-xs text-(--nc-fg-2)">
             <div class="flex items-center gap-2">
               <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
                 <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 000-1.5h-3.25V5z" clip-rule="evenodd"/>
               </svg>
               Timestamp
             </div>
-            <div class="flex rounded border border-[var(--nc-border)] overflow-hidden text-[10px]">
+            <div class="flex rounded border border-(--nc-border) overflow-hidden text-[10px]">
               <button
                 on:click={() => timestampMode.set('relative')}
                 class="px-2 py-0.5 transition-colors
                        {$timestampMode === 'relative'
                          ? 'bg-blue-700 text-white'
-                         : 'text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)]'}">
+                         : 'text-(--nc-fg-3) hover:bg-(--nc-surface-2)'}">
                 Relative
               </button>
               <button
                 on:click={() => timestampMode.set('absolute')}
-                class="px-2 py-0.5 transition-colors border-l border-[var(--nc-border)]
+                class="px-2 py-0.5 transition-colors border-l border-(--nc-border)
                        {$timestampMode === 'absolute'
                          ? 'bg-blue-700 text-white'
-                         : 'text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)]'}">
+                         : 'text-(--nc-fg-3) hover:bg-(--nc-surface-2)'}">
                 Absolute
               </button>
             </div>
           </div>
           <!-- Auto-scroll toggle -->
-          <div class="flex items-center justify-between px-3 py-2 text-xs text-[var(--nc-fg-2)]">
+          <div class="flex items-center justify-between px-3 py-2 text-xs text-(--nc-fg-2)">
             <span title="Follow newest packets during live capture">Auto-scroll</span>
-            <div class="flex rounded border border-[var(--nc-border)] overflow-hidden text-[10px]">
+            <div class="flex rounded border border-(--nc-border) overflow-hidden text-[10px]">
               <button on:click={() => autoScrollEnabled.set(true)}
                 class="px-2 py-0.5 transition-colors
-                       {$autoScrollEnabled ? 'bg-blue-700 text-white' : 'text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)]'}">
+                       {$autoScrollEnabled ? 'bg-blue-700 text-white' : 'text-(--nc-fg-3) hover:bg-(--nc-surface-2)'}">
                 On
               </button>
               <button on:click={() => autoScrollEnabled.set(false)}
-                class="px-2 py-0.5 transition-colors border-l border-[var(--nc-border)]
-                       {!$autoScrollEnabled ? 'bg-blue-700 text-white' : 'text-[var(--nc-fg-3)] hover:bg-[var(--nc-surface-2)]'}">
+                class="px-2 py-0.5 transition-colors border-l border-(--nc-border)
+                       {!$autoScrollEnabled ? 'bg-blue-700 text-white' : 'text-(--nc-fg-3) hover:bg-(--nc-surface-2)'}">
                 Off
               </button>
             </div>
           </div>
           <!-- Column visibility -->
           <div class="px-3 py-2 text-xs">
-            <div class="text-[10px] text-[var(--nc-fg-4)] mb-1.5 uppercase tracking-wide">Columns</div>
+            <div class="text-[10px] text-(--nc-fg-4) mb-1.5 uppercase tracking-wide">Columns</div>
             <div class="grid grid-cols-2 gap-x-4 gap-y-1.5">
               {#each CV_COLS as col}
-                <label class="flex items-center gap-1.5 cursor-pointer text-[var(--nc-fg-2)]">
+                <label class="flex items-center gap-1.5 cursor-pointer text-(--nc-fg-2)">
                   <input type="checkbox"
                     checked={$columnVisibility[col.key]}
                     on:change={(e) => handleColVisChange(col.key, e)}
@@ -804,7 +804,7 @@
 
   <!-- ── Row 2: filter bar ────────────────────────────────────────────────── -->
   <div role="none"
-    class="flex items-center gap-2 px-3 py-1.5 border-t border-[var(--nc-border-1)]"
+    class="flex items-center gap-2 px-3 py-1.5 border-t border-(--nc-border-1)"
     on:click|stopPropagation on:keydown|stopPropagation>
 
     <!-- Presets button -->
@@ -814,8 +814,8 @@
         title="Preset filters"
         class="flex items-center gap-1 px-2 py-1 rounded text-xs border transition-colors
                {showPresets
-                 ? 'bg-[var(--nc-surface-2)] border-[var(--nc-border)] text-[var(--nc-fg)]'
-                 : 'bg-[var(--nc-surface)] border-[var(--nc-border)] text-[var(--nc-fg-3)] hover:text-[var(--nc-fg)] hover:bg-[var(--nc-surface-2)]'}"
+                 ? 'bg-(--nc-surface-2) border-(--nc-border) text-(--nc-fg)'
+                 : 'bg-(--nc-surface) border-(--nc-border) text-(--nc-fg-3) hover:text-(--nc-fg) hover:bg-(--nc-surface-2)'}"
       >
         <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
           <path d="M10.75 16.82A7.462 7.462 0 0115 15.5c.71 0 1.396.098 2.046.282A.75.75 0 0018 15.06v-11a.75.75 0 00-.546-.721A9.006 9.006 0 0015 3a8.963 8.963 0 00-4.25 1.065V16.82zM9.25 4.065A8.963 8.963 0 005 3c-.85 0-1.673.118-2.454.339A.75.75 0 002 4.06v11a.75.75 0 00.954.721A7.506 7.506 0 015 15.5c1.579 0 3.042.487 4.25 1.32V4.065z"/>
@@ -826,22 +826,22 @@
       {#if showPresets}
         <div role="none"
           on:click|stopPropagation on:keydown|stopPropagation
-          class="absolute left-0 top-full mt-1 z-50 min-w-[380px] max-h-96 overflow-y-auto
-                 bg-[var(--nc-surface-1)] border border-[var(--nc-border)] rounded shadow-xl"
+          class="absolute left-0 top-full mt-1 z-50 min-w-95 max-h-96 overflow-y-auto
+                 bg-(--nc-surface-1) border border-(--nc-border) rounded shadow-xl"
         >
           {#if userPresets.length}
             {#each userPresets as preset}
               <button on:click={() => selectPreset(preset.filter)}
-                class="w-full text-left px-3 py-2 hover:bg-[var(--nc-surface-2)] transition-colors
-                       border-b border-[var(--nc-border-1)] last:border-b-0">
+                class="w-full text-left px-3 py-2 hover:bg-(--nc-surface-2) transition-colors
+                       border-b border-(--nc-border-1) last:border-b-0">
                 <div class="flex items-baseline justify-between gap-3">
-                  <span class="text-xs font-medium text-[var(--nc-fg)] shrink-0">{preset.title}</span>
-                  <span class="text-[10px] font-mono text-[var(--nc-fg-3)] truncate">{preset.filter}</span>
+                  <span class="text-xs font-medium text-(--nc-fg) shrink-0">{preset.title}</span>
+                  <span class="text-[10px] font-mono text-(--nc-fg-3) truncate">{preset.filter}</span>
                 </div>
               </button>
             {/each}
           {:else}
-            <div class="px-4 py-6 text-center text-[var(--nc-fg-5)] text-xs">
+            <div class="px-4 py-6 text-center text-(--nc-fg-5) text-xs">
               No presets — manage them in Settings.
             </div>
           {/if}
@@ -865,8 +865,8 @@
         autocapitalize="off"
         data-filter-input="true"
         placeholder="Apply display filter  —  ip.src == 1.2.3.4  ||  port == 9001  &&  not arp"
-        class="w-full bg-[var(--nc-surface)] text-[var(--nc-fg)] rounded px-3 py-1 text-xs
-               border focus:outline-none placeholder-[var(--nc-fg-4)] transition-colors font-mono"
+        class="w-full bg-(--nc-surface) text-(--nc-fg) rounded px-3 py-1 text-xs
+               border focus:outline-none placeholder-(--nc-fg-4) transition-colors font-mono"
         style="border-color: {filterBorderColor}"
       />
 
@@ -875,25 +875,25 @@
           on:mousedown|preventDefault
           on:click|stopPropagation on:keydown|stopPropagation
           class="absolute left-0 top-full mt-1 z-50 w-full max-h-60 overflow-y-auto
-                 bg-[var(--nc-surface-1)] border border-[var(--nc-border)] rounded shadow-xl"
+                 bg-(--nc-surface-1) border border-(--nc-border) rounded shadow-xl"
         >
           {#each suggestions as s, i}
             <button
               on:click={() => selectSuggestion(s)}
               class="w-full text-left px-3 py-2 flex items-center gap-2 text-xs transition-colors
-                     border-b border-[var(--nc-border-1)] last:border-b-0
-                     {i === selectedIdx ? 'bg-[var(--nc-surface-2)]' : 'hover:bg-[var(--nc-surface-2)]'}"
+                     border-b border-(--nc-border-1) last:border-b-0
+                     {i === selectedIdx ? 'bg-(--nc-surface-2)' : 'hover:bg-(--nc-surface-2)'}"
             >
               {#if s.kind === 'history'}
-                <svg class="w-3 h-3 shrink-0 text-[var(--nc-fg-4)]" viewBox="0 0 20 20" fill="currentColor">
+                <svg class="w-3 h-3 shrink-0 text-(--nc-fg-4)" viewBox="0 0 20 20" fill="currentColor">
                   <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 000-1.5h-3.25V5z" clip-rule="evenodd"/>
                 </svg>
-                <span class="font-mono text-[var(--nc-fg-1)] truncate">{s.label}</span>
+                <span class="font-mono text-(--nc-fg-1) truncate">{s.label}</span>
               {:else}
                 <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 {BADGE[s.kind]}">{s.kind}</span>
-                <span class="font-mono text-[var(--nc-fg)] font-medium">{s.label}</span>
+                <span class="font-mono text-(--nc-fg) font-medium">{s.label}</span>
                 {#if s.insertText !== s.label}
-                  <span class="font-mono text-[var(--nc-fg-3)] text-[10px] truncate ml-auto">{s.insertText}</span>
+                  <span class="font-mono text-(--nc-fg-3) text-[10px] truncate ml-auto">{s.insertText}</span>
                 {/if}
               {/if}
             </button>
@@ -913,8 +913,8 @@
     <button
       on:click={applyFilter}
       disabled={!filterEmpty && !filterResult.valid}
-      class="flex items-center gap-1.5 bg-[var(--nc-surface-2)] hover:bg-[var(--nc-border)] text-[var(--nc-fg-1)]
-             px-3 py-1 rounded text-xs border border-[var(--nc-border)] transition-colors shrink-0
+      class="flex items-center gap-1.5 bg-(--nc-surface-2) hover:bg-(--nc-border) text-(--nc-fg-1)
+             px-3 py-1 rounded text-xs border border-(--nc-border) transition-colors shrink-0
              disabled:opacity-40 disabled:cursor-not-allowed"
     >
       Apply
@@ -943,7 +943,7 @@
 <!-- ── Export flyout submenu (fixed, escapes overflow-y-auto of settings panel) -->
 {#if exportOpen}
   <div
-    class="fixed z-[200] min-w-[9rem] bg-[var(--nc-surface-1)] border border-[var(--nc-border)]
+    class="fixed z-200 min-w-36 bg-(--nc-surface-1) border border-(--nc-border)
            rounded shadow-xl overflow-hidden"
     style="right:{window.innerWidth - exportMenuPos.x}px; top:{exportMenuPos.y}px"
     role="menu"
@@ -953,17 +953,17 @@
   >
     <button on:click={() => { exportPcap(); exportOpen = false; showSettings = false }}
       class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-             text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+             text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
       PCAP
     </button>
     <button on:click={() => { handleCsvExport(); exportOpen = false; showSettings = false }}
       class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-             text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+             text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
       CSV
     </button>
     <button on:click={() => { exportCapture(); exportOpen = false; showSettings = false }}
       class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-             text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+             text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
       Capture (JSON)
     </button>
   </div>
@@ -972,7 +972,7 @@
 <!-- ── Import flyout submenu -->
 {#if importOpen}
   <div
-    class="fixed z-[200] min-w-[9rem] bg-[var(--nc-surface-1)] border border-[var(--nc-border)]
+    class="fixed z-200 min-w-36 bg-(--nc-surface-1) border border-(--nc-border)
            rounded shadow-xl overflow-hidden"
     style="right:{window.innerWidth - importMenuPos.x}px; top:{importMenuPos.y}px"
     role="menu"
@@ -982,17 +982,17 @@
   >
     <button on:click={() => { pcapFileInput.click(); importOpen = false; showSettings = false }}
       class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-             text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+             text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
       PCAP
     </button>
     <button on:click={() => { csvFileInput.click(); importOpen = false; showSettings = false }}
       class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-             text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+             text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
       CSV
     </button>
     <button on:click={() => { captureFileInput.click(); importOpen = false; showSettings = false }}
       class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-             text-[var(--nc-fg-2)] hover:bg-[var(--nc-surface-2)] hover:text-[var(--nc-fg)] transition-colors">
+             text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
       Capture (JSON)
     </button>
   </div>

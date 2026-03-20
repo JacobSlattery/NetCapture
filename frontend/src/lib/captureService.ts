@@ -166,7 +166,13 @@ function startDisplayTick(): void {
 function stopDisplayTick(): void {
   clearInterval(displayTimer ?? undefined)
   displayTimer = null
-  _displayBuf  = []
+  if (_displayBuf.length) {
+    const snap = _displayBuf.splice(0)
+    packets.update(list => {
+      const next = list.concat(snap)
+      return (_ringBuffer && next.length > _maxPackets) ? next.slice(-_maxPackets) : next
+    })
+  }
 }
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
@@ -236,7 +242,7 @@ function connect(): void {
 
   ws.onclose = () => {
     connectionStatus.set('disconnected')
-    reconnectTimer = setTimeout(connect, 2_000)
+    reconnectTimer = setTimeout(connect, 1_000)
   }
 }
 

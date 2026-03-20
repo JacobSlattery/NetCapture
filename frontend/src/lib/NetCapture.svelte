@@ -146,7 +146,7 @@
 </script>
 
 <div
-  class="flex flex-col h-full overflow-hidden bg-[var(--nc-surface)]"
+  class="flex flex-col h-full overflow-hidden bg-(--nc-surface)"
   data-theme={theme || undefined}
 >
   <Toolbar
@@ -162,8 +162,8 @@
 
   <button
     on:click={() => showCharts ? closeCharts() : openCharts()}
-    class="shrink-0 text-[10px] text-[var(--nc-fg-5)] hover:text-[var(--nc-fg-2)] py-0.5 border-b border-[var(--nc-border-1)]
-           bg-[var(--nc-surface)] transition-colors tracking-widest uppercase"
+    class="shrink-0 text-[10px] text-(--nc-fg-5) hover:text-(--nc-fg-2) py-0.5 border-b border-(--nc-border-1)
+           bg-(--nc-surface) transition-colors tracking-widest uppercase"
   >
     {showCharts ? '▲ hide charts' : '▼ show charts'}
   </button>

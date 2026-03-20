@@ -8,13 +8,15 @@ export type DecodedValue =
 export interface DecodedField {
   key:   string
   value: DecodedValue
-  type:  string   // 'u8' | 'u16' | 'u32' | 'f32' | 'str' | 'bool' | 'list' | 'dict'
+  type:  string   // 'u8'|'u16'|'u32'|'u64'|'i8'|'i16'|'i32'|'i64'|'f32'|'f64'
+                  // 'str'|'strlong'|'bool'|'hex'|'json'|'list'|'dict'
 }
 
 export interface DecodedFrame {
   interpreterName: string
   fields: DecodedField[]
   error?: string
+  payloadOffset?: number   // byte offset in raw_hex where the interpreter's payload starts
 }
 
 // ── Track mode fingerprint ────────────────────────────────────────────────────
