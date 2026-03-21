@@ -124,3 +124,19 @@ select {
 .nc-tint-http  { background-color: var(--nc-p-http-tint);  }
 .nc-tint-https { background-color: var(--nc-p-https-tint); }
 .nc-tint-arp   { background-color: var(--nc-p-arp-tint);   }
+
+/* ── Packet row hover/selection state ───────────────────────────────────── */
+.nc-row-unselected {
+  border-left: 2px solid transparent;
+  cursor: pointer;
+}
+.nc-row-unselected:hover {
+  background-color: var(--nc-row-hover);
+  border-left-color: rgb(96 165 250 / 0.6);
+}
+
+/* ── Packet-issue row indicators ─────────────────────────────────────────── */
+/* Override the transparent left border set by .nc-row-unselected.           */
+/* Defined after the hover rule so same-specificity ordering is predictable. */
+.nc-row-warn { border-left-color: rgba(251, 191,  36, 0.80); } /* amber-400 */
+.nc-row-err  { border-left-color: rgba(239,  68,  68, 0.80); } /* red-500   */

@@ -34,6 +34,82 @@ _PORT_LABEL: dict[int, str] = {
 
 # ── Packet parsing ────────────────────────────────────────────────────────────
 
+# ── Checksum validation ───────────────────────────────────────────────────────
+# NOTE: Windows TCP/IP offloads checksum computation to the NIC for locally
+# generated packets, so outgoing frames captured via SIO_RCVALL may show bad
+# checksums that are actually filled in correctly by hardware before they leave
+# the wire.  Incoming packets received from the network have already been
+# validated by the NIC and will only show bad checksums if they were corrupted
+# in transit or are malformed/injected.  This is the same caveat Wireshark
+# documents for Windows.
+
+def _ones_complement_sum(data: bytes) -> int:
+    """Sum all 16-bit words using one's complement arithmetic."""
+    if len(data) % 2:
+        data += b'\x00'
+    total = 0
+    for i in range(0, len(data), 2):
+        total += (data[i] << 8) | data[i + 1]
+    while total >> 16:
+        total = (total & 0xFFFF) + (total >> 16)
+    return total
+
+
+def _ip_checksum_ok(raw: bytes, ihl: int) -> bool:
+    """Return True when the IP header checksum is valid (sum of header == 0xFFFF)."""
+    return _ones_complement_sum(raw[:ihl]) == 0xFFFF
+
+
+def _tcp_checksum_ok(raw: bytes, ihl: int, src_bytes: bytes, dst_bytes: bytes) -> bool:
+    """Return True when the TCP segment checksum is valid."""
+    tcp_seg = raw[ihl:]
+    pseudo  = src_bytes + dst_bytes + bytes([0, 6]) + struct.pack("!H", len(tcp_seg))
+    return _ones_complement_sum(pseudo + tcp_seg) == 0xFFFF
+
+
+def _udp_checksum_ok(raw: bytes, ihl: int, src_bytes: bytes, dst_bytes: bytes) -> bool:
+    """Return True when the UDP checksum is valid.  Zero means not computed (optional)."""
+    udp_seg = raw[ihl:]
+    if struct.unpack_from("!H", udp_seg, 6)[0] == 0:
+        return True  # checksum field is optional; 0 = sender chose not to compute
+    udp_len = struct.unpack_from("!H", udp_seg, 4)[0]
+    pseudo  = src_bytes + dst_bytes + bytes([0, 17]) + struct.pack("!H", udp_len)
+    return _ones_complement_sum(pseudo + udp_seg) == 0xFFFF
+
+
+def compute_warnings(raw: bytes) -> list[str]:
+    """
+    Run all network-level validations on a raw IPv4 packet and return a list
+    of human-readable warning strings.  An empty list means no issues found.
+
+    This is intentionally kept cheap: one pass over the IP header + one pseudo-
+    header checksum for the transport layer.  It is safe to call on every packet.
+
+    Public so that _manager.py can call it for injected packets (which bypass
+    the parse_packet() path) without duplicating the logic.
+    """
+    warnings: list[str] = []
+    if len(raw) < 20:
+        return warnings
+    version_ihl = raw[0]
+    if (version_ihl >> 4) != 4:
+        return warnings  # not IPv4
+    ihl       = (version_ihl & 0x0F) * 4
+    proto_num = raw[9]
+    src_bytes = raw[12:16]
+    dst_bytes = raw[16:20]
+    payload   = raw[ihl:]
+    if not _ip_checksum_ok(raw, ihl):
+        warnings.append("Bad IP checksum")
+    if proto_num == 6 and len(payload) >= 20:
+        if not _tcp_checksum_ok(raw, ihl, src_bytes, dst_bytes):
+            warnings.append("Bad TCP checksum")
+    elif proto_num == 17 and len(payload) >= 8:
+        if not _udp_checksum_ok(raw, ihl, src_bytes, dst_bytes):
+            warnings.append("Bad UDP checksum")
+    return warnings
+
+
 def _label(transport: str, src_port: int | None, dst_port: int | None) -> str:
     for p in (dst_port, src_port):
         if p and p in _PORT_LABEL:
@@ -171,6 +247,9 @@ def parse_packet(raw: bytes, start_time: float, seq: int) -> dict | None:
             f"code={code}  {src_ip} → {dst_ip}"
         )
 
+    # ── Checksum validation ───────────────────────────────────────────────────
+    warnings = compute_warnings(raw)
+
     # Raw sockets on Windows give us the IP packet without an Ethernet header.
     # We send only what we actually have — the frontend detects IP-only frames.
     raw_hex = raw[:total_len].hex()
@@ -195,6 +274,7 @@ def parse_packet(raw: bytes, start_time: float, seq: int) -> dict | None:
         "flags":     flags,
         "info":      info,
         "raw_hex":   raw_hex,
+        "warnings":  warnings if warnings else None,
         # Internal — consumed by _emit_packet, never serialised to the frontend.
         "_payload":       app_payload,
         "_header_bytes":  header_bytes,

@@ -46,8 +46,10 @@ export interface CaptureProfile {
   name:        string
   description: string
   interface:   string    // network interface to bind when this profile is active
-  filter:      string    // whitespace-separated OR filter terms
+  filter:      string    // Python-style capture filter (backend pre-filter)
   bpf_filter?: string    // kernel-level BPF filter (Npcap mode only)
+  inject?:     boolean   // true = use WS injection mode (/ws/inject) instead of a real interface
+  builtin?:    boolean   // true for built-in defaults — read-only
 }
 
 // ── Packet ────────────────────────────────────────────────────────────────────
@@ -65,6 +67,7 @@ export interface Packet {
   info: string
   raw_hex?: string
   decoded?: DecodedFrame   // set by backend when an interpreter matches
+  warnings?: string[]      // checksum failures or other network-level issues
 }
 
 export interface NetworkInterface {

@@ -19,6 +19,13 @@
  *   dst.port  / tcp.dstport    destination port  (exact int)
  *   proto     / ip.proto       protocol name  (case-insensitive exact)
  *   info      / frame.info     info string  (case-insensitive contains via ==)
+ *   warnings                  network-level warning list (e.g. "Bad IP checksum")
+ *   decoded.error             interpreter error string
+ *
+ * Boolean bare-word flags (no operator):
+ *   has_warnings              packet has one or more network-level warnings
+ *   has_error                 packet has a decoder error
+ *   has_issues                packet has warnings OR a decoder error
  *
  * Operators:
  *   ==        exact match (port: int eq; IP: exact; proto: case-insensitive exact;
@@ -108,7 +115,12 @@ export const KNOWN_FIELDS = new Set([
   'proto', 'ip.proto', 'protocol',
   'info', 'frame.info',
   'interpreter',
+  'warnings',
 ])
+
+// Bare-word flags that evaluate to boolean without an operator.
+// Not in KNOWN_FIELDS because they don't take an operator.
+const BARE_FLAGS = new Set(['has_warnings', 'has_error', 'has_issues'])
 
 // ── Tokenizer ─────────────────────────────────────────────────────────────────
 
@@ -264,7 +276,11 @@ function evalExpr(e: Expr, p: Packet): boolean {
     case 'and':  return evalExpr(e.left, p) && evalExpr(e.right, p)
     case 'or':   return evalExpr(e.left, p) || evalExpr(e.right, p)
     case 'not':  return !evalExpr(e.expr, p)
-    case 'bare': return (p.protocol ?? '').toLowerCase() === e.value
+    case 'bare':
+      if (e.value === 'has_warnings') return !!(p.warnings?.length)
+      if (e.value === 'has_error')    return !!(p.decoded?.error)
+      if (e.value === 'has_issues')   return !!(p.warnings?.length) || !!(p.decoded?.error)
+      return BARE_FLAGS.has(e.value) ? false : (p.protocol ?? '').toLowerCase() === e.value
     case 'cmp':  return evalCmp(e.field, e.op, e.value, p)
   }
 }
@@ -290,7 +306,13 @@ function evalCmp(field: string, op: string, rawValue: string, p: Packet): boolea
     case 'proto': case 'ip.proto': case 'protocol':        candidates = [(p.protocol ?? '').toLowerCase()]; break
     case 'info':  case 'frame.info':                        candidates = [(p.info    ?? '').toLowerCase()]; break
     case 'interpreter':                                     candidates = [(p.decoded?.interpreterName ?? '').toLowerCase()]; break
+    case 'warnings':                                        candidates = (p.warnings ?? []).map(w => w.toLowerCase()); break
     default: {
+      // decoded.error — frame-level error string (not in fields array)
+      if (field === 'decoded.error') {
+        candidates = p.decoded?.error ? [p.decoded.error.toLowerCase()] : []
+        break
+      }
       // decoded.<key> — look up in interpreter fields, flatten nested structures
       if (field.startsWith('decoded.')) {
         const [fieldKey, ...nestedPath] = field.slice('decoded.'.length).split('.')

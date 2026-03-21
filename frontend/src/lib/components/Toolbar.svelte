@@ -5,23 +5,25 @@
     interfaces, captureFilter, captureMode, profiles, activeProfile, packets,
     addressBook, addressBookPrefill, timestampMode,
     autoScrollEnabled, maxPackets, capturePacketLimit, ringBuffer, columnVisibility,
-    bpfFilter, filterFocusTick, filteredPackets, dnsCache, npcapAvailable,
+    bpfFilter, filterFocusTick, filteredPackets, dnsCache, npcapAvailable, trackStrictness,
   } from '../stores'
   import type { CaptureProfile, DecodedValue, AddressBookEntry } from '../types'
   import type { ColumnVisibility } from '../stores'
-  import { exportCapture, importCapture, saveAddressBook, exportPcap, importPcap, exportCsv, importCsv } from '../captureService'
+  import { exportCapture, importCapture, saveAddressBook, exportPcap, importPcap, exportCsv, importCsv, createProfile, updateProfile, deleteProfile } from '../captureService'
   import { parseFilter, tokenize, KNOWN_FIELDS } from '../filter'
   import AddressBookEditor from './AddressBookEditor.svelte'
   import PresetEditor from './PresetEditor.svelte'
+  import ProfileEditor from './ProfileEditor.svelte'
 
   const dispatch = createEventDispatcher()
 
   // ── Modal / panel state ────────────────────────────────────────────────────
-  let showSettings     = false
-  let showPresets      = false   // filter-bar presets dropdown
-  let showAddressBook  = false
-  let showPresetEditor = false
-  let addressPrefill   = ''
+  let showSettings      = false
+  let showPresets       = false   // filter-bar presets dropdown
+  let showAddressBook   = false
+  let showPresetEditor  = false
+  let showProfileEditor = false
+  let addressPrefill    = ''
 
   // Open address book editor when another component (e.g. PacketTable) requests it
   $: if ($addressBookPrefill !== null) {
@@ -36,25 +38,53 @@
   let presetFileInput:   HTMLInputElement
   let pcapFileInput:     HTMLInputElement
   let csvFileInput:      HTMLInputElement
+  let profileFileInput:  HTMLInputElement
 
   // ── Recording submenu state ────────────────────────────────────────────────
-  let exportOpen = false
-  let importOpen = false
-  let exportMenuPos = { x: 0, y: 0 }
-  let importMenuPos = { x: 0, y: 0 }
+  let exportOpen   = false
+  let importOpen   = false
+  let addrOpen     = false
+  let presetsOpen  = false
+  let profilesOpen = false
+  let exportMenuPos   = { x: 0, y: 0 }
+  let importMenuPos   = { x: 0, y: 0 }
+  let addrMenuPos     = { x: 0, y: 0 }
+  let presetsMenuPos  = { x: 0, y: 0 }
+  let profilesMenuPos = { x: 0, y: 0 }
 
   function openExportMenu(e: MouseEvent): void {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     exportMenuPos = { x: rect.left, y: rect.top }
     exportOpen = !exportOpen
-    importOpen = false
+    importOpen = false; addrOpen = false; presetsOpen = false; profilesOpen = false
   }
 
   function openImportMenu(e: MouseEvent): void {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     importMenuPos = { x: rect.left, y: rect.top }
     importOpen = !importOpen
-    exportOpen = false
+    exportOpen = false; addrOpen = false; presetsOpen = false; profilesOpen = false
+  }
+
+  function openAddrMenu(e: MouseEvent): void {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    addrMenuPos = { x: rect.left, y: rect.top }
+    addrOpen = !addrOpen
+    exportOpen = false; importOpen = false; presetsOpen = false; profilesOpen = false
+  }
+
+  function openPresetsMenu(e: MouseEvent): void {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    presetsMenuPos = { x: rect.left, y: rect.top }
+    presetsOpen = !presetsOpen
+    exportOpen = false; importOpen = false; addrOpen = false; profilesOpen = false
+  }
+
+  function openProfilesMenu(e: MouseEvent): void {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    profilesMenuPos = { x: rect.left, y: rect.top }
+    profilesOpen = !profilesOpen
+    exportOpen = false; importOpen = false; addrOpen = false; presetsOpen = false
   }
 
   async function handleCaptureImport(e: Event): Promise<void> {
@@ -99,6 +129,28 @@
     }).finally(() => { addrBookFileInput.value = '' })
   }
 
+  function exportProfiles(): void {
+    const user = $profiles.filter(p => !p.builtin)
+    download('netcapture-profiles.json', JSON.stringify(user, null, 2))
+  }
+
+  async function handleProfileImport(e: Event): Promise<void> {
+    const file = (e.target as HTMLInputElement).files?.[0]
+    if (!file) return
+    file.text().then(async text => {
+      try {
+        const parsed = JSON.parse(text) as CaptureProfile[]
+        if (!Array.isArray(parsed)) throw new Error('Expected a JSON array')
+        const existingIds = new Set($profiles.map(p => p.id))
+        for (const p of parsed) {
+          if (existingIds.has(p.id)) continue
+          const { id: _id, builtin: _builtin, ...data } = p
+          await createProfile(data as Omit<CaptureProfile, 'id' | 'builtin'>)
+        }
+      } catch (err) { console.error('[profile-import]', err) }
+    }).finally(() => { profileFileInput.value = '' })
+  }
+
   function exportPresets(): void {
     download('netcapture-presets.json', JSON.stringify(userPresets, null, 2))
   }
@@ -141,13 +193,34 @@
       const prof = $profiles.find((p: CaptureProfile) => p.id === id) ?? null
       activeProfile.set(prof)
       if (prof) {
-        selectedInterface.set(prof.interface)
+        selectedInterface.set(
+          prof.inject && !prof.interface?.trim() ? 'injected' : (prof.interface || 'any')
+        )
         if ($npcapAvailable && prof.bpf_filter != null) bpfFilter.set(prof.bpf_filter)
       }
     } else {
       activeProfile.set(null)
       selectedInterface.set(val.slice('iface:'.length))
     }
+  }
+
+  // ── Profile CRUD handlers ──────────────────────────────────────────────────
+
+  async function handleProfileCreate(e: CustomEvent): Promise<void> {
+    await createProfile(e.detail)
+  }
+
+  async function handleProfileUpdate(e: CustomEvent): Promise<void> {
+    const { id, data } = e.detail as { id: string; data: typeof e.detail.data }
+    const updated = await updateProfile(id, data)
+    // Keep activeProfile in sync if it was just edited
+    if (updated && $activeProfile?.id === id) activeProfile.set({ ...$activeProfile, ...updated })
+  }
+
+  async function handleProfileDelete(e: CustomEvent): Promise<void> {
+    const id = e.detail as string
+    await deleteProfile(id)
+    if ($activeProfile?.id === id) activeProfile.set(null)
   }
 
   // ── BPF presets ────────────────────────────────────────────────────────────
@@ -212,6 +285,8 @@
     { title: 'NC-Frame packets only',       filter: 'interpreter == NC-Frame' },
     { title: 'Decoded field equals value',  filter: 'decoded.temperature == 25.0' },
     { title: 'NC-Frame on UDP port 9001',   filter: 'interpreter == NC-Frame && port == 9001' },
+    { title: 'Packets with issues',         filter: 'has_issues' },
+    { title: 'Bad checksum / warnings',     filter: 'has_warnings' },
   ]
 
   // ── User presets (localStorage) ───────────────────────────────────────────
@@ -374,7 +449,9 @@
     protocol: 'bg-green-900/40           text-green-300',
   }
 
-  function closeDropdowns(): void { showPresets = false; showSettings = false; showBpfPresets = false; exportOpen = false; importOpen = false; focused = false }
+  $: userProfileCount = $profiles.filter(p => !p.builtin).length
+
+  function closeDropdowns(): void { showPresets = false; showSettings = false; showBpfPresets = false; exportOpen = false; importOpen = false; addrOpen = false; presetsOpen = false; profilesOpen = false; focused = false }
 
   function applyFilter(): void {
     if (!filterResult.valid) return
@@ -445,6 +522,7 @@
 <input bind:this={captureFileInput}  type="file" accept=".json" class="hidden" on:change={handleCaptureImport} />
 <input bind:this={addrBookFileInput} type="file" accept=".json" class="hidden" on:change={handleAddrBookImport} />
 <input bind:this={presetFileInput}   type="file" accept=".json" class="hidden" on:change={handlePresetImport} />
+<input bind:this={profileFileInput}  type="file" accept=".json" class="hidden" on:change={handleProfileImport} />
 <input bind:this={pcapFileInput}     type="file" accept=".pcap,.pcapng" class="hidden" on:change={handlePcapImport} />
 <input bind:this={csvFileInput}      type="file" accept=".csv"           class="hidden" on:change={handleCsvImport} />
 
@@ -577,10 +655,10 @@
           on:keydown|stopPropagation
         >
 
-          <!-- ── Recording ──────────────────────────────────────────────── -->
+          <!-- ── Options ──────────────────────────────────────────────── -->
           <div class="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider
                       text-(--nc-fg-4) border-b border-(--nc-border-1)">
-            Recording
+            Options
           </div>
           <!-- Export group -->
           <button on:click={openExportMenu}
@@ -591,7 +669,7 @@
               <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/>
               <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
             </svg>
-            Export
+            Export Recording
             <svg class="w-3 h-3 ml-auto" viewBox="0 0 20 20" fill="currentColor">
               <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
             </svg>
@@ -607,82 +685,67 @@
               <path d="M9.25 13.25a.75.75 0 001.5 0V4.636l2.955 3.129a.75.75 0 001.09-1.03l-4.25-4.5a.75.75 0 00-1.09 0l-4.25 4.5a.75.75 0 101.09 1.03L9.25 4.636v8.614z"/>
               <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
             </svg>
-            Import
+            Import Recording
             <svg class="w-3 h-3 ml-auto" viewBox="0 0 20 20" fill="currentColor">
               <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
             </svg>
           </button>
 
-          <!-- ── Addresses ──────────────────────────────────────────────── -->
-          <div class="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider
-                      text-(--nc-fg-4) border-t border-b border-(--nc-border-1) mt-1">
-            Addresses
-          </div>
-          <button on:click={() => { showAddressBook = true; showSettings = false }}
-            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-                   text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
-            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-              <path d="M10 2a.75.75 0 01.75.75v.258a33.186 33.186 0 016.668.83.75.75 0 01-.336 1.461 31.28 31.28 0 00-1.103-.232l1.702 7.545a.75.75 0 01-.387.832A4.981 4.981 0 0115 14c-.825 0-1.606-.2-2.294-.556a.75.75 0 01-.387-.832l1.77-7.849a31.743 31.743 0 00-3.339-.254v11.505a20.415 20.415 0 013.78.501.75.75 0 11-.339 1.46 18.927 18.927 0 00-3.441-.456V17.5a.75.75 0 01-1.5 0v-.921a18.927 18.927 0 00-3.441.456.75.75 0 11-.339-1.46 20.415 20.415 0 013.78-.501V4.509a31.743 31.743 0 00-3.339.254l1.77 7.849a.75.75 0 01-.387.832A4.979 4.979 0 015 14a4.981 4.981 0 01-2.294-.556.75.75 0 01-.387-.832l1.702-7.545c-.37.07-.738.146-1.103.232a.75.75 0 01-.336-1.46 33.186 33.186 0 016.668-.83V2.75A.75.75 0 0110 2z"/>
-            </svg>
-            Manage Addresses
-            {#if $addressBook.length}
-              <span class="ml-auto text-[10px] text-(--nc-fg-4)">{$addressBook.length}</span>
-            {/if}
-          </button>
-          <button on:click={() => { exportAddrBook(); showSettings = false }}
-            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-                   text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors
-                   disabled:opacity-40" disabled={!$addressBook.length}>
-            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-              <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/>
-              <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
-            </svg>
-            Export Address Book
-          </button>
-          <button on:click={() => { addrBookFileInput.click(); showSettings = false }}
-            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-                   text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
-            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-              <path d="M9.25 13.25a.75.75 0 001.5 0V4.636l2.955 3.129a.75.75 0 001.09-1.03l-4.25-4.5a.75.75 0 00-1.09 0l-4.25 4.5a.75.75 0 101.09 1.03L9.25 4.636v8.614z"/>
-              <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
-            </svg>
-            Import Address Book
-          </button>
-
           <!-- ── Filter Presets ──────────────────────────────────────────── -->
-          <div class="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider
-                      text-(--nc-fg-4) border-t border-b border-(--nc-border-1) mt-1">
-            Filter Presets
-          </div>
-          <button on:click={() => { showPresetEditor = true; showSettings = false }}
-            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-                   text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
+          <button on:click={openPresetsMenu}
+            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs transition-colors
+                   text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg)
+                   {presetsOpen ? 'bg-(--nc-surface-2) text-(--nc-fg)' : ''}">
             <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path fill-rule="evenodd" d="M2 4.75A.75.75 0 012.75 4h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 4.75zm0 10.5a.75.75 0 01.75-.75h7.5a.75.75 0 010 1.5h-7.5a.75.75 0 01-.75-.75zM2 10a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 10z" clip-rule="evenodd"/>
             </svg>
-            Manage Presets
-            {#if userPresets.length}
-              <span class="ml-auto text-[10px] text-(--nc-fg-4)">{userPresets.length}</span>
-            {/if}
+            Filter Presets
+            <span class="ml-auto flex items-center gap-1.5">
+              {#if userPresets.length}
+                <span class="text-[10px] text-(--nc-fg-4)">{userPresets.length}</span>
+              {/if}
+              <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
+              </svg>
+            </span>
           </button>
-          <button on:click={() => { exportPresets(); showSettings = false }}
-            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-                   text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors
-                   disabled:opacity-40" disabled={!userPresets.length}>
+
+          <!-- ── Addresses ──────────────────────────────────────────────── -->
+          <button on:click={openAddrMenu}
+            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs transition-colors
+                   text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg)
+                   {addrOpen ? 'bg-(--nc-surface-2) text-(--nc-fg)' : ''}">
             <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-              <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/>
-              <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
+              <path d="M10 2a.75.75 0 01.75.75v.258a33.186 33.186 0 016.668.83.75.75 0 01-.336 1.461 31.28 31.28 0 00-1.103-.232l1.702 7.545a.75.75 0 01-.387.832A4.981 4.981 0 0115 14c-.825 0-1.606-.2-2.294-.556a.75.75 0 01-.387-.832l1.77-7.849a31.743 31.743 0 00-3.339-.254v11.505a20.415 20.415 0 013.78.501.75.75 0 11-.339 1.46 18.927 18.927 0 00-3.441-.456V17.5a.75.75 0 01-1.5 0v-.921a18.927 18.927 0 00-3.441.456.75.75 0 11-.339-1.46 20.415 20.415 0 013.78-.501V4.509a31.743 31.743 0 00-3.339.254l1.77 7.849a.75.75 0 01-.387.832A4.979 4.979 0 015 14a4.981 4.981 0 01-2.294-.556.75.75 0 01-.387-.832l1.702-7.545c-.37.07-.738.146-1.103.232a.75.75 0 01-.336-1.46 33.186 33.186 0 016.668-.83V2.75A.75.75 0 0110 2z"/>
             </svg>
-            Export Presets
+            Addresses
+            <span class="ml-auto flex items-center gap-1.5">
+              {#if $addressBook.length}
+                <span class="text-[10px] text-(--nc-fg-4)">{$addressBook.length}</span>
+              {/if}
+              <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
+              </svg>
+            </span>
           </button>
-          <button on:click={() => { presetFileInput.click(); showSettings = false }}
-            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
-                   text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
+
+          <!-- ── Capture Profiles ───────────────────────────────────────── -->
+          <button on:click={openProfilesMenu}
+            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs transition-colors
+                   text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg)
+                   {profilesOpen ? 'bg-(--nc-surface-2) text-(--nc-fg)' : ''}">
             <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-              <path d="M9.25 13.25a.75.75 0 001.5 0V4.636l2.955 3.129a.75.75 0 001.09-1.03l-4.25-4.5a.75.75 0 00-1.09 0l-4.25 4.5a.75.75 0 101.09 1.03L9.25 4.636v8.614z"/>
-              <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
+              <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z"/>
             </svg>
-            Import Presets
+            Capture Profiles
+            <span class="ml-auto flex items-center gap-1.5">
+              {#if userProfileCount}
+                <span class="text-[10px] text-(--nc-fg-4)">{userProfileCount}</span>
+              {/if}
+              <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
+              </svg>
+            </span>
           </button>
 
           <!-- ── Capture ────────────────────────────────────────────────── -->
@@ -779,6 +842,22 @@
               </button>
             </div>
           </div>
+          <!-- Track mode strictness -->
+          <div class="flex items-center justify-between px-3 py-2 text-xs text-(--nc-fg-2)">
+            <span title="Strict: exact 5-tuple match (protocol, src/dst IP, src/dst port). Loose: matches IP addresses and destination port only — handles source port changes on reconnect.">Track matching</span>
+            <div class="flex rounded border border-(--nc-border) overflow-hidden text-[10px]">
+              <button on:click={() => trackStrictness.set('strict')}
+                class="px-2 py-0.5 transition-colors
+                       {$trackStrictness === 'strict' ? 'bg-blue-700 text-white' : 'text-(--nc-fg-3) hover:bg-(--nc-surface-2)'}">
+                Strict
+              </button>
+              <button on:click={() => trackStrictness.set('loose')}
+                class="px-2 py-0.5 transition-colors border-l border-(--nc-border)
+                       {$trackStrictness === 'loose' ? 'bg-blue-700 text-white' : 'text-(--nc-fg-3) hover:bg-(--nc-surface-2)'}">
+                Loose
+              </button>
+            </div>
+          </div>
           <!-- Column visibility -->
           <div class="px-3 py-2 text-xs">
             <div class="text-[10px] text-(--nc-fg-4) mb-1.5 uppercase tracking-wide">Columns</div>
@@ -807,68 +886,70 @@
     class="flex items-center gap-2 px-3 py-1.5 border-t border-(--nc-border-1)"
     on:click|stopPropagation on:keydown|stopPropagation>
 
-    <!-- Presets button -->
-    <div class="relative shrink-0">
-      <button
-        on:click|stopPropagation={() => { showPresets = !showPresets; showSettings = false; focused = false }}
-        title="Preset filters"
-        class="flex items-center gap-1 px-2 py-1 rounded text-xs border transition-colors
-               {showPresets
-                 ? 'bg-(--nc-surface-2) border-(--nc-border) text-(--nc-fg)'
-                 : 'bg-(--nc-surface) border-(--nc-border) text-(--nc-fg-3) hover:text-(--nc-fg) hover:bg-(--nc-surface-2)'}"
-      >
-        <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-          <path d="M10.75 16.82A7.462 7.462 0 0115 15.5c.71 0 1.396.098 2.046.282A.75.75 0 0018 15.06v-11a.75.75 0 00-.546-.721A9.006 9.006 0 0015 3a8.963 8.963 0 00-4.25 1.065V16.82zM9.25 4.065A8.963 8.963 0 005 3c-.85 0-1.673.118-2.454.339A.75.75 0 002 4.06v11a.75.75 0 00.954.721A7.506 7.506 0 015 15.5c1.579 0 3.042.487 4.25 1.32V4.065z"/>
-        </svg>
-        Presets
-      </button>
+    <!-- Presets button merged with filter input -->
+    <div class="relative flex-1 flex items-center">
 
-      {#if showPresets}
-        <div role="none"
-          on:click|stopPropagation on:keydown|stopPropagation
-          class="absolute left-0 top-full mt-1 z-50 min-w-95 max-h-96 overflow-y-auto
-                 bg-(--nc-surface-1) border border-(--nc-border) rounded shadow-xl"
+      <!-- Presets button (left side, merged) -->
+      <div class="relative shrink-0">
+        <button
+          on:click|stopPropagation={() => { showPresets = !showPresets; showSettings = false; focused = false }}
+          title="Preset filters"
+          class="flex items-center gap-1 px-2 py-1 rounded-l text-xs border border-r-0 transition-colors
+                 {showPresets
+                   ? 'bg-(--nc-surface-2) border-(--nc-border) text-(--nc-fg)'
+                   : 'bg-(--nc-surface) border-(--nc-border) text-(--nc-fg-3) hover:text-(--nc-fg) hover:bg-(--nc-surface-2)'}"
         >
-          {#if userPresets.length}
-            {#each userPresets as preset}
-              <button on:click={() => selectPreset(preset.filter)}
-                class="w-full text-left px-3 py-2 hover:bg-(--nc-surface-2) transition-colors
-                       border-b border-(--nc-border-1) last:border-b-0">
-                <div class="flex items-baseline justify-between gap-3">
-                  <span class="text-xs font-medium text-(--nc-fg) shrink-0">{preset.title}</span>
-                  <span class="text-[10px] font-mono text-(--nc-fg-3) truncate">{preset.filter}</span>
-                </div>
-              </button>
-            {/each}
-          {:else}
-            <div class="px-4 py-6 text-center text-(--nc-fg-5) text-xs">
-              No presets — manage them in Settings.
-            </div>
-          {/if}
-        </div>
-      {/if}
-    </div>
+          <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M10.75 16.82A7.462 7.462 0 0115 15.5c.71 0 1.396.098 2.046.282A.75.75 0 0018 15.06v-11a.75.75 0 00-.546-.721A9.006 9.006 0 0015 3a8.963 8.963 0 00-4.25 1.065V16.82zM9.25 4.065A8.963 8.963 0 005 3c-.85 0-1.673.118-2.454.339A.75.75 0 002 4.06v11a.75.75 0 00.954.721A7.506 7.506 0 015 15.5c1.579 0 3.042.487 4.25 1.32V4.065z"/>
+          </svg>
+        </button>
 
-    <!-- Filter input with autocomplete -->
-    <div class="relative flex-1">
-      <input
-        type="text"
-        bind:this={filterInputEl}
-        bind:value={pendingFilter}
-        on:keydown={handleKeydown}
-        on:focus={() => { focused = true; selectedIdx = -1 }}
-        on:blur={() => focused = false}
-        on:click|stopPropagation
-        spellcheck="false"
-        autocomplete="off"
-        autocorrect="off"
-        autocapitalize="off"
-        data-filter-input="true"
-        placeholder="Apply display filter  —  ip.src == 1.2.3.4  ||  port == 9001  &&  not arp"
-        class="w-full bg-(--nc-surface) text-(--nc-fg) rounded px-3 py-1 text-xs
-               border focus:outline-none placeholder-(--nc-fg-4) transition-colors font-mono"
-        style="border-color: {filterBorderColor}"
-      />
+        {#if showPresets}
+          <div role="none"
+            on:click|stopPropagation on:keydown|stopPropagation
+            class="absolute left-0 top-full mt-1 z-50 min-w-95 max-h-96 overflow-y-auto
+                   bg-(--nc-surface-1) border border-(--nc-border) rounded shadow-xl"
+          >
+            {#if userPresets.length}
+              {#each userPresets as preset}
+                <button on:click={() => selectPreset(preset.filter)}
+                  class="w-full text-left px-3 py-2 hover:bg-(--nc-surface-2) transition-colors
+                         border-b border-(--nc-border-1) last:border-b-0">
+                  <div class="flex items-baseline justify-between gap-3">
+                    <span class="text-xs font-medium text-(--nc-fg) shrink-0">{preset.title}</span>
+                    <span class="text-[10px] font-mono text-(--nc-fg-3) truncate">{preset.filter}</span>
+                  </div>
+                </button>
+              {/each}
+            {:else}
+              <div class="px-4 py-6 text-center text-(--nc-fg-5) text-xs">
+                No presets — manage them in Settings.
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+
+      <!-- Filter input (right side, merged) -->
+      <div class="relative flex-1">
+        <input
+          type="text"
+          bind:this={filterInputEl}
+          bind:value={pendingFilter}
+          on:keydown={handleKeydown}
+          on:focus={() => { focused = true; selectedIdx = -1 }}
+          on:blur={() => focused = false}
+          on:click|stopPropagation
+          spellcheck="false"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="off"
+          data-filter-input="true"
+          placeholder="Apply display filter  —  ip.src == 1.2.3.4  ||  port == 9001  &&  not arp"
+          class="w-full bg-(--nc-surface) text-(--nc-fg) rounded-r px-3 py-1 text-xs
+                 border focus:outline-none placeholder-(--nc-fg-4) transition-colors font-mono"
+          style="border-color: {filterBorderColor}"
+        />
 
       {#if showSuggestions}
         <div role="none"
@@ -900,6 +981,7 @@
           {/each}
         </div>
       {/if}
+    </div>
     </div>
 
     <!-- Validation status -->
@@ -937,6 +1019,16 @@
     defaultPresets={BUILTIN_PRESETS}
     on:save={(e) => { saveUserPresets(e.detail); showPresetEditor = false }}
     on:close={() => showPresetEditor = false}
+  />
+{/if}
+
+{#if showProfileEditor}
+  <ProfileEditor
+    profiles={$profiles}
+    on:create={handleProfileCreate}
+    on:update={handleProfileUpdate}
+    on:delete={handleProfileDelete}
+    on:close={() => showProfileEditor = false}
   />
 {/if}
 
@@ -994,6 +1086,99 @@
       class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
              text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
       Capture (JSON)
+    </button>
+  </div>
+{/if}
+
+<!-- ── Addresses flyout submenu -->
+{#if addrOpen}
+  <div
+    class="fixed z-200 min-w-44 bg-(--nc-surface-1) border border-(--nc-border)
+           rounded shadow-xl overflow-hidden"
+    style="right:{window.innerWidth - addrMenuPos.x}px; top:{addrMenuPos.y}px"
+    role="menu"
+    tabindex="-1"
+    on:click|stopPropagation
+    on:keydown|stopPropagation
+  >
+    <button on:click={() => { showAddressBook = true; addrOpen = false; showSettings = false }}
+      class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+             text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
+      Manage
+    </button>
+    <button on:click={() => { exportAddrBook(); addrOpen = false; showSettings = false }}
+      disabled={!$addressBook.length}
+      class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+             text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors
+             disabled:opacity-40 disabled:cursor-not-allowed">
+      Export
+    </button>
+    <button on:click={() => { addrBookFileInput.click(); addrOpen = false; showSettings = false }}
+      class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+             text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
+      Import
+    </button>
+  </div>
+{/if}
+
+<!-- ── Filter Presets flyout submenu -->
+{#if presetsOpen}
+  <div
+    class="fixed z-200 min-w-44 bg-(--nc-surface-1) border border-(--nc-border)
+           rounded shadow-xl overflow-hidden"
+    style="right:{window.innerWidth - presetsMenuPos.x}px; top:{presetsMenuPos.y}px"
+    role="menu"
+    tabindex="-1"
+    on:click|stopPropagation
+    on:keydown|stopPropagation
+  >
+    <button on:click={() => { showPresetEditor = true; presetsOpen = false; showSettings = false }}
+      class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+             text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
+      Manage
+    </button>
+    <button on:click={() => { exportPresets(); presetsOpen = false; showSettings = false }}
+      disabled={!userPresets.length}
+      class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+             text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors
+             disabled:opacity-40 disabled:cursor-not-allowed">
+      Export
+    </button>
+    <button on:click={() => { presetFileInput.click(); presetsOpen = false; showSettings = false }}
+      class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+             text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
+      Import
+    </button>
+  </div>
+{/if}
+
+<!-- ── Capture Profiles flyout submenu -->
+{#if profilesOpen}
+  <div
+    class="fixed z-200 min-w-44 bg-(--nc-surface-1) border border-(--nc-border)
+           rounded shadow-xl overflow-hidden"
+    style="right:{window.innerWidth - profilesMenuPos.x}px; top:{profilesMenuPos.y}px"
+    role="menu"
+    tabindex="-1"
+    on:click|stopPropagation
+    on:keydown|stopPropagation
+  >
+    <button on:click={() => { showProfileEditor = true; profilesOpen = false; showSettings = false }}
+      class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+             text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
+      Manage
+    </button>
+    <button on:click={() => { exportProfiles(); profilesOpen = false; showSettings = false }}
+      disabled={!userProfileCount}
+      class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+             text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors
+             disabled:opacity-40 disabled:cursor-not-allowed">
+      Export
+    </button>
+    <button on:click={() => { profileFileInput.click(); profilesOpen = false; showSettings = false }}
+      class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+             text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
+      Import
     </button>
   </div>
 {/if}

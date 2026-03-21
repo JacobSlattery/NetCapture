@@ -110,3 +110,7 @@
   background-color: var(--nc-row-hover);
   border-left-color: rgb(96 165 250 / 0.6); /* blue-400/60 */
 }
+
+/* ── Packet-issue row indicators ─────────────────────────────────────────── */
+.nc-row-warn { border-left-color: rgba(251, 191,  36, 0.80); } /* amber-400 */
+.nc-row-err  { border-left-color: rgba(239,  68,  68, 0.80); } /* red-500   */

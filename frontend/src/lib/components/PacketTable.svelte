@@ -115,8 +115,11 @@
   }
 
   function rowClass(pkt: Packet, isSelected: boolean): string {
-    if (isSelected) return 'bg-blue-900/50 border-l-2 border-blue-400'
-    return `${ROW_TINT[pkt.protocol] ?? ''} nc-row-unselected`
+    if (isSelected) return 'bg-[#005999] border-l-2 border-teal-400'
+    const issueCls = pkt.decoded?.error  ? 'nc-row-err'
+                   : pkt.warnings?.length ? 'nc-row-warn'
+                   : ''
+    return `${ROW_TINT[pkt.protocol] ?? ''} nc-row-unselected${issueCls ? ' ' + issueCls : ''}`
   }
   function badgeStyle(proto: string): string {
     return `background-color: var(${BADGE_VAR[proto] ?? '--nc-p-default'})`
@@ -385,7 +388,7 @@
       <!-- svelte-ignore a11y-click-events-have-key-events -->
       <!-- svelte-ignore a11y-interactive-supports-focus -->
       <div
-        class="grid items-center border-b border-(--nc-border-1) {rowClass(pkt, $selectedPacket?.id === pkt.id)} transition-colors duration-75"
+        class="grid items-center {rowClass(pkt, $selectedPacket?.id === pkt.id)} transition-colors duration-75"
         style="grid-template-columns:{COLS}"
         on:click={() => selectAndPin(pkt)}
         role="row"
@@ -446,7 +449,19 @@
           <div class="px-3 py-1.5 text-(--nc-fg-3) tabular-nums">{pkt.length}</div>
         {/if}
         {#if $columnVisibility.info}
-          <div class="px-3 py-1.5 text-(--nc-fg-2) truncate">{pkt.info}</div>
+          <div class="px-3 py-1.5 text-(--nc-fg-2) truncate flex items-center gap-1.5"
+            title={pkt.decoded?.error
+              ? `Decoder error: ${pkt.decoded.error}`
+              : pkt.warnings?.length
+                ? pkt.warnings.join(' · ')
+                : undefined}>
+            {#if pkt.decoded?.error}
+              <span class="shrink-0 text-(--nc-status-err) text-[10px] leading-none" aria-label="Decoder error">⚠</span>
+            {:else if pkt.warnings?.length}
+              <span class="shrink-0 text-amber-400 text-[10px] leading-none" aria-label="Network warning">⚠</span>
+            {/if}
+            {pkt.info}
+          </div>
         {/if}
       </div>
     {:else}

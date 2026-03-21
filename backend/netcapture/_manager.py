@@ -10,7 +10,7 @@ import socket as _socket
 import time
 from collections import deque
 
-from .capture import RawCapture, get_capture_ip
+from .capture import RawCapture, get_capture_ip, compute_warnings
 from .interpreters import find_interpreter
 from ._filter import parse_filter, filter_eval, filter_uses_decoded
 
@@ -138,8 +138,12 @@ class CaptureManager:
         self._filter_needs_decoded = filter_uses_decoded(self._filter_ast)
         self._bpf_filter   = bpf_filter.strip()
 
+        # Support comma-separated interface list (e.g. "eth0, eth1").
+        # _determine_mode probes using the first interface.
+        primary_iface = iface.split(",")[0].strip() if "," in iface else iface
+
         loop = asyncio.get_event_loop()
-        mode = await loop.run_in_executor(None, _determine_mode, iface)
+        mode = await loop.run_in_executor(None, _determine_mode, primary_iface)
 
         if mode == "unavailable":
             raise RuntimeError(
@@ -161,7 +165,12 @@ class CaptureManager:
         if mode == "inject":
             self._task = asyncio.create_task(self._inject_loop())
         elif mode == "scapy":
-            scapy_iface = None if iface == "any" else iface
+            if "," in iface:
+                scapy_iface: str | list[str] | None = [
+                    i.strip() for i in iface.split(",") if i.strip()
+                ]
+            else:
+                scapy_iface = None if iface == "any" else iface
             self._task = asyncio.create_task(self._scapy_loop(scapy_iface, pre_filter))
         else:
             bind_ip = get_capture_ip(iface)
@@ -219,7 +228,7 @@ class CaptureManager:
         except Exception:
             return True
 
-    def _process_packet(self, pkt: dict) -> dict | None:
+    def _process_packet(self, pkt: dict, apply_filter: bool = True) -> dict | None:
         """
         Run a raw packet through the interpreter + filter pipeline.
 
@@ -228,6 +237,10 @@ class CaptureManager:
         filtered out.  Does NOT broadcast to subscribers — callers are
         responsible for that so they can batch multiple packets into one
         WebSocket message.
+
+        Pass ``apply_filter=False`` to bypass the capture pre-filter (used
+        for injected packets, which come from an explicit external source
+        rather than the network capture stack).
         """
         payload: bytes | None = pkt.pop("_payload", None)
         # _header_bytes and _payload_offset stay in pkt so interpreters can
@@ -244,7 +257,20 @@ class CaptureManager:
                     decoded["payloadOffset"] = pkt["_payload_offset"]
                 pkt["decoded"] = decoded
 
-        if not self._matches_filter(pkt):
+        # Validate checksums for any packet that carries raw bytes.
+        # parse_packet() already does this for captured packets; this path
+        # covers injected packets (which bypass parse_packet entirely).
+        if not pkt.get("warnings"):
+            raw_hex = pkt.get("raw_hex")
+            if raw_hex:
+                try:
+                    w = compute_warnings(bytes.fromhex(raw_hex))
+                    if w:
+                        pkt["warnings"] = w
+                except Exception:
+                    pass
+
+        if apply_filter and not self._matches_filter(pkt):
             pkt.pop("_header_bytes",   None)
             pkt.pop("_payload_offset", None)
             return None
@@ -273,8 +299,13 @@ class CaptureManager:
                 pass
 
     def _emit_packet(self, pkt: dict) -> None:
-        """Process and immediately broadcast a single packet (used by inject mode)."""
-        processed = self._process_packet(pkt)
+        """Process and immediately broadcast a single packet (used by inject mode).
+
+        Injected packets bypass the capture pre-filter — the pre-filter is an
+        optimisation for network capture volume, not a gate for explicit test traffic.
+        The frontend display filter still applies to injected packets normally.
+        """
+        processed = self._process_packet(pkt, apply_filter=False)
         if processed is None:
             return
         msg = json.dumps({"type": "packet", "data": processed})

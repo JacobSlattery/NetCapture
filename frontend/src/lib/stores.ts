@@ -62,8 +62,14 @@ export const timestampMode = writable<'relative' | 'absolute'>(
 )
 timestampMode.subscribe(v => localStorage.setItem('nc:timestampMode', v))
 
-// BPF-style display filter (client-side)
-export const captureFilter = writable<string>('')
+// BPF-style display filter (client-side) — persisted across sessions
+export const captureFilter = writable<string>(
+  localStorage.getItem('nc:captureFilter') ?? ''
+)
+captureFilter.subscribe(v => {
+  if (v) localStorage.setItem('nc:captureFilter', v)
+  else   localStorage.removeItem('nc:captureFilter')
+})
 
 // Auto-scroll: follow newest packets during live capture
 export const autoScrollEnabled = writable<boolean>(
@@ -121,6 +127,13 @@ export const chartHistory = writable<ChartPoint[]>([])
 export const trackMode        = writable<boolean>(false)
 export const trackFingerprint = writable<TrackFingerprint | null>(null)
 export const trackPrev        = writable<Packet | null>(null)
+
+// Track strictness: 'strict' matches exact 5-tuple; 'loose' drops src_port
+// (handles TCP reconnects / UDP senders that change source port).
+export const trackStrictness = writable<'strict' | 'loose'>(
+  (localStorage.getItem('nc:trackStrictness') as 'strict' | 'loose') ?? 'strict'
+)
+trackStrictness.subscribe(v => localStorage.setItem('nc:trackStrictness', v))
 
 // Derived filtered packet list using the Wireshark-style filter parser.
 // An invalid filter expression shows all packets (no filtering applied).

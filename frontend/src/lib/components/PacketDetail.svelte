@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
-  import { selectedPacket, trackMode, trackFingerprint, trackPrev, isCapturing, connectionStatus, trackLastUpdate } from '../stores'
+  import { selectedPacket, trackMode, trackFingerprint, trackPrev, isCapturing, connectionStatus, trackLastUpdate, trackStrictness } from '../stores'
   import type { Packet, TrackFingerprint } from '../types'
   import FieldValue from './FieldValue.svelte'
 
@@ -30,9 +30,12 @@
   const TRACK_TEXT: Record<TrackState, string> = {
     off:     '',
     active:  'Tracking',
-    waiting: 'Tracking — no signal',
-    offline: 'Tracking — offline',
+    waiting: 'No signal',
+    offline: 'Offline',
   }
+
+  $: trackLabel = trackState === 'off' ? '' :
+    `${TRACK_TEXT[trackState]} [${$trackStrictness}]`
   const TRACK_COLOR: Record<TrackState, string> = {
     off:     '',
     active:  'var(--nc-status-ok)',
@@ -439,7 +442,7 @@
         >Stop</button>
         <div class="w-1.5 h-1.5 rounded-full {TRACK_DOT[trackState]}"></div>
         <span class="text-[10px] font-semibold uppercase tracking-wider"
-          style="color:{TRACK_COLOR[trackState]}">{TRACK_TEXT[trackState]}</span>
+          style="color:{TRACK_COLOR[trackState]}">{trackLabel}</span>
       </div>
     {:else}
       <button
@@ -480,6 +483,23 @@
       on:click={() => { exitTrack(); selectedPacket.set(null) }}
     >✕</button>
   </div>
+
+  <!-- ── Issue banner (checksum failures, decoder errors) ───────────────── -->
+  {#if p.warnings?.length || p.decoded?.error}
+    <div class="shrink-0 flex items-start gap-2 px-3 py-1.5 border-b border-(--nc-border)
+                bg-[color-mix(in_srgb,var(--nc-status-err)_8%,transparent)]">
+      <span class="shrink-0 font-bold text-[11px] leading-tight mt-px
+                   {p.decoded?.error ? 'text-(--nc-status-err)' : 'text-amber-400'}">⚠</span>
+      <div class="flex flex-col gap-0.5 min-w-0">
+        {#each (p.warnings ?? []) as w}
+          <span class="text-[10px] text-amber-400">{w}</span>
+        {/each}
+        {#if p.decoded?.error}
+          <span class="text-[10px] text-(--nc-status-err)">Decoder: {p.decoded.error}</span>
+        {/if}
+      </div>
+    </div>
+  {/if}
 
   <!-- ── Body: protocol tree | hex dump ─────────────────────────────────── -->
   <div class="flex flex-1 min-h-0">
@@ -525,7 +545,7 @@
           </span>
           {#if decoded.payloadOffset != null}
             <span
-              class="ml-auto shrink-0 text-(--nc-fg-5) text-[9px] font-mono
+              class="ml-auto shrink-0 text-(--nc-fg-2) text-[9px] font-mono
                      bg-(--nc-surface-2) rounded px-1 py-px"
               title="Byte offset in the raw frame where this interpreter's payload starts">
               @ 0x{decoded.payloadOffset.toString(16).padStart(2, '0')}

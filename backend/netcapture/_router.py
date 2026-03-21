@@ -30,15 +30,17 @@ import json
 import socket as _dns_socket
 import time as _time
 from datetime import datetime as _datetime
+from pathlib import Path
 from typing import Sequence
 
 import psutil
-from fastapi import APIRouter, UploadFile, File, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ._manager import manager, reset_session_start, _get_session_start
 from .interpreters import Interpreter, register
+from .profiles import ProfileStore, DEFAULT_PROFILES
 
 
 def _parse_pcap_bytes(data: bytes) -> list[dict]:
@@ -130,11 +132,21 @@ class StartRequest(BaseModel):
     bpf_filter: str = ""
 
 
+class ProfileBody(BaseModel):
+    name:        str
+    description: str = ""
+    interface:   str = ""
+    filter:      str = ""
+    bpf_filter:  str = ""
+    inject:      bool = False
+
+
 def create_router(
     *,
     profiles: list[dict] | None = None,
     extra_interpreters: Sequence[Interpreter] | None = None,
     address_book: list[dict] | None = None,
+    profiles_path: Path | str | None = Path.home() / ".netcapture" / "profiles.json",
 ) -> APIRouter:
     """
     Return an APIRouter with all NetCapture HTTP and WebSocket routes.
@@ -158,9 +170,10 @@ def create_router(
         for interp in extra_interpreters:
             register(interp)
 
-    if profiles is None:
-        from .profiles import DEFAULT_PROFILES
-        profiles = DEFAULT_PROFILES
+    _store = ProfileStore(
+        defaults=profiles if profiles is not None else DEFAULT_PROFILES,
+        path=Path(profiles_path) if profiles_path is not None else None,
+    )
 
     _address_book: list[dict] = list(address_book) if address_book else []
 
@@ -205,7 +218,6 @@ def create_router(
                     ifaces.append({"name": "loopback", "description": "Loopback  (127.0.0.1)", "ip": "127.0.0.1"})
             except ImportError:
                 pass
-        ifaces.append({"name": "injected", "description": "WS Inject  (/ws/inject)", "ip": None})
         return {"interfaces": ifaces}
 
     @router.get("/api/health")
@@ -214,7 +226,25 @@ def create_router(
 
     @router.get("/api/profiles")
     async def list_profiles():
-        return {"profiles": profiles}
+        return {"profiles": _store.list()}
+
+    @router.post("/api/profiles")
+    async def create_profile(body: ProfileBody):
+        profile = _store.create(body.model_dump())
+        return {"profile": profile}
+
+    @router.put("/api/profiles/{profile_id}")
+    async def update_profile(profile_id: str, body: ProfileBody):
+        updated = _store.update(profile_id, body.model_dump())
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Profile not found or is a built-in")
+        return {"profile": updated}
+
+    @router.delete("/api/profiles/{profile_id}")
+    async def delete_profile(profile_id: str):
+        if not _store.delete(profile_id):
+            raise HTTPException(status_code=404, detail="Profile not found or is a built-in")
+        return {"status": "ok"}
 
     @router.get("/api/address-book")
     async def get_address_book():

@@ -13,12 +13,14 @@
 import {
   packets, stats, chartHistory,
   isCapturing, captureMode, connectionStatus, selectedPacket,
-  trackMode, trackFingerprint, trackPrev, captureFilter, addressBook, trackLastUpdate,
-  maxPackets, capturePacketLimit, ringBuffer, dnsCache, npcapAvailable,
+  trackMode, trackFingerprint, trackPrev, addressBook, trackLastUpdate, trackStrictness,
+  captureFilter,
+  maxPackets, capturePacketLimit, ringBuffer, dnsCache, npcapAvailable, profiles,
 } from './stores'
 import type { Packet, ChartPoint, NetworkInterface, CaptureProfile, WsMessage, TrackFingerprint, AddressBookEntry } from './types'
 import type { ColumnVisibility } from './stores'
-import { parseFilter, matchesFilter, setAddressBook, type ParseResult } from './filter'
+import { setAddressBook, parseFilter, matchesFilter } from './filter'
+import type { ParseResult } from './filter'
 
 // Keep filter's address book mirror in sync with the store
 addressBook.subscribe(book => setAddressBook(book))
@@ -34,9 +36,10 @@ ringBuffer.subscribe(v => { _ringBuffer = v })
 
 // ── Module-level state ────────────────────────────────────────────────────────
 
-let ws:             WebSocket | null = null
-let reconnectTimer: ReturnType<typeof setTimeout>  | null = null
-let displayTimer:   ReturnType<typeof setInterval> | null = null
+let ws:              WebSocket | null = null
+let reconnectTimer:  ReturnType<typeof setTimeout>  | null = null
+let displayTimer:    ReturnType<typeof setInterval> | null = null
+let reacquireTimer:  ReturnType<typeof setInterval> | null = null
 
 let _displayBuf:   Packet[]     = []
 let _lastPacketId: number       = 0
@@ -53,13 +56,22 @@ function resolveWsUrl(): string {
   return `${proto}//${location.host}/ws/capture`
 }
 
-// ── Active filter mirror ──────────────────────────────────────────────────────
-let _filterResult: ParseResult = { valid: true }
-captureFilter.subscribe(raw => { _filterResult = parseFilter(raw) })
-
 // ── Track mode mirrors + persistence ─────────────────────────────────────────
-let _trackMode:   boolean             = false
-let _fingerprint: TrackFingerprint | null = null
+// ── Adaptive display-tick state ───────────────────────────────────────────────
+// The display tick runs at 32 ms (≈30 fps) so light traffic feels smooth.
+// When the buffer contains ≥ FLUSH_HEAVY_THRESHOLD packets the flush is
+// throttled to FLUSH_HEAVY_MS (250 ms / 4 Hz) to prevent DOM thrashing under
+// heavy capture load.
+const FLUSH_HEAVY_THRESHOLD = 20
+const FLUSH_HEAVY_MS        = 250
+let   _lastFlushMs           = 0
+
+let _trackMode:        boolean              = false
+let _fingerprint:      TrackFingerprint | null = null
+let _trackLastUpdateMs: number | null      = null   // mirror of trackLastUpdate store
+let _trackStrictness:  'strict' | 'loose'  = 'strict'
+let _filterResult:     ParseResult         = { valid: true }  // mirror of captureFilter store
+const TRACK_WAITING_THRESHOLD = 5_000  // ms before considered "no signal"
 
 ;{
   let first = true
@@ -79,6 +91,9 @@ let _fingerprint: TrackFingerprint | null = null
     else   localStorage.removeItem('nc:trackFingerprint')
   })
 }
+trackLastUpdate.subscribe(v => { _trackLastUpdateMs = v })
+trackStrictness.subscribe(v => { _trackStrictness = v })
+captureFilter.subscribe(v => { _filterResult = parseFilter(v) })
 ;{
   let first = true
   selectedPacket.subscribe((p: Packet | null) => {
@@ -97,19 +112,37 @@ function matchesFingerprint(pkt: Packet, fp: TrackFingerprint): boolean {
     && (fp.interpreterName == null || pkt.decoded?.interpreterName === fp.interpreterName)
 }
 
+// Looser match for re-acquisition: drops src_port and interpreter.
+// src_port is omitted because TCP reconnects allocate a new ephemeral port, and
+// many UDP senders also change source port on restart. dst_port (the service port)
+// is kept because it identifies the stream.
+function matchesFingerprintLoose(pkt: Packet, fp: TrackFingerprint): boolean {
+  return pkt.protocol === fp.protocol
+    && pkt.src_ip  === fp.src_ip
+    && pkt.dst_ip  === fp.dst_ip
+    && pkt.dst_port === fp.dst_port
+}
+
 function applyTracking(batch: Packet[]): void {
   if (!_trackMode || !_fingerprint) return
-  const match = [...batch].reverse().find(p =>
-    matchesFingerprint(p, _fingerprint!) && matchesFilter(p, _filterResult)
-  )
+  // Match on fingerprint only — display filter is for the table, not for tracking.
+  // This prevents a display filter mismatch from permanently killing re-acquisition.
+  const rev   = batch.filter(p => matchesFilter(p, _filterResult)).reverse()
+  const fn    = _trackStrictness === 'strict' ? matchesFingerprint : matchesFingerprintLoose
+  const match = rev.find(p => fn(p, _fingerprint!))
   if (!match) return
+
+  // Always refresh the "active" timestamp whenever a matching packet arrives,
+  // regardless of whether the detail panel actually re-renders.
+  const now = Date.now()
+  trackLastUpdate.set(now)
+
   let cur: Packet | null = null
   const unsub = selectedPacket.subscribe((p: Packet | null) => { cur = p })
   unsub()
   if (cur === null || (cur as Packet).id !== match.id) {
     trackPrev.set(cur)
     selectedPacket.set(match)
-    trackLastUpdate.set(Date.now())
   }
 }
 
@@ -136,12 +169,62 @@ function ingest(batch: Packet[]): void {
   for (const p of fresh) _displayBuf.push(p)
 }
 
+// ── Re-acquisition scanner ────────────────────────────────────────────────────
+// Runs on a 1 Hz interval independently of the display tick.  When tracking has
+// been in "waiting / no signal" state for longer than the threshold it scans the
+// tail of the stored packet list for a match.  This catches cases where the batch
+// path missed a match (interpreter not yet applied, src_port changed, etc.) because
+// those packets are already sitting in the packets store and visible in the table.
+
+function reacquireScan(): void {
+  if (!_trackMode || !_fingerprint) return
+  const now = Date.now()
+  // Still receiving recent matches — nothing to do.
+  if (_trackLastUpdateMs !== null && now - _trackLastUpdateMs < TRACK_WAITING_THRESHOLD) return
+
+  let stored: Packet[] = []
+  const unsub = packets.subscribe(p => { stored = p })
+  unsub()
+  if (!stored.length) return
+
+  // Search the most recent 200 packets, newest first.
+  const tail  = stored.slice(-200).filter(p => matchesFilter(p, _filterResult)).reverse()
+  const fn    = _trackStrictness === 'strict' ? matchesFingerprint : matchesFingerprintLoose
+  const match = tail.find(p => fn(p, _fingerprint!))
+  if (!match) return
+
+  trackLastUpdate.set(now)
+  _trackLastUpdateMs = now
+
+  let cur: Packet | null = null
+  const unsub2 = selectedPacket.subscribe((p: Packet | null) => { cur = p })
+  unsub2()
+  if (cur === null || (cur as Packet).id !== match.id) {
+    trackPrev.set(cur)
+    selectedPacket.set(match)
+  }
+}
+
+function startReacquireTimer(): void {
+  if (reacquireTimer) return
+  reacquireTimer = setInterval(reacquireScan, 1_000)
+}
+
+function stopReacquireTimer(): void {
+  clearInterval(reacquireTimer ?? undefined)
+  reacquireTimer = null
+}
+
 // ── Display tick (4 Hz) ───────────────────────────────────────────────────────
 
 function startDisplayTick(): void {
   if (displayTimer) return
+  startReacquireTimer()
   displayTimer = setInterval(() => {
     if (!_displayBuf.length) return
+    const now = Date.now()
+    if (_displayBuf.length >= FLUSH_HEAVY_THRESHOLD && now - _lastFlushMs < FLUSH_HEAVY_MS) return
+    _lastFlushMs = now
     const batch = _displayBuf.splice(0)
     let newTotal = 0
     packets.update(list => {
@@ -160,12 +243,13 @@ function startDisplayTick(): void {
       stopDisplayTick()
       fetch(`${_apiBase}/api/capture/stop`, { method: 'POST' }).catch(() => {})
     }
-  }, 250)
+  }, 32)
 }
 
 function stopDisplayTick(): void {
   clearInterval(displayTimer ?? undefined)
   displayTimer = null
+  stopReacquireTimer()
   if (_displayBuf.length) {
     const snap = _displayBuf.splice(0)
     packets.update(list => {
@@ -526,6 +610,58 @@ export async function fetchProfiles(): Promise<CaptureProfile[]> {
     return data.profiles ?? []
   } catch {
     return []
+  }
+}
+
+async function _refreshProfiles(): Promise<void> {
+  profiles.set(await fetchProfiles())
+}
+
+export async function createProfile(
+  data: Omit<CaptureProfile, 'id' | 'builtin'>,
+): Promise<CaptureProfile | null> {
+  try {
+    const res = await fetch(`${_apiBase}/api/profiles`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    if (!res.ok) return null
+    const json = await res.json() as { profile?: CaptureProfile }
+    await _refreshProfiles()
+    return json.profile ?? null
+  } catch {
+    return null
+  }
+}
+
+export async function updateProfile(
+  id: string,
+  data: Omit<CaptureProfile, 'id' | 'builtin'>,
+): Promise<CaptureProfile | null> {
+  try {
+    const res = await fetch(`${_apiBase}/api/profiles/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    if (!res.ok) return null
+    const json = await res.json() as { profile?: CaptureProfile }
+    await _refreshProfiles()
+    return json.profile ?? null
+  } catch {
+    return null
+  }
+}
+
+export async function deleteProfile(id: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${_apiBase}/api/profiles/${id}`, { method: 'DELETE' })
+    if (!res.ok) return false
+    await _refreshProfiles()
+    return true
+  } catch {
+    return false
   }
 }
 

@@ -56,7 +56,7 @@ NetCapture selects a capture mode automatically, in order of preference:
 |------|----------|-----------------|
 | `scapy` | Npcap + scapy installed, `--environment npcap` | All traffic on any interface including loopback (L2) |
 | `real` | Run as Administrator | All IP traffic on one non-loopback interface |
-| `inject` | Nothing | Packets pushed in via `/ws/inject` — select **WS Inject** interface in the UI |
+| `inject` | Nothing | Packets pushed in via `/ws/inject` — use a capture profile with **Enable injection** and no interface set |
 
 The active mode is shown as a badge in the toolbar (e.g. **Npcap** or **Raw**).
 
@@ -99,7 +99,9 @@ pixi run inject --mode random --rate 10    # random payloads at 10 Hz
 pixi run inject --mode replay --file capture.pcap --speed 2.0   # replay a pcap at 2× speed
 ```
 
-**Setup:** select **WS Inject (/ws/inject)** from the interface dropdown and click **Start** before running the injector. Packets sent while capture is stopped are silently discarded — the injector prints `⏸` for each discarded packet and `✓` once recording begins.
+**Setup:** create or select a capture profile with **Enable injection** checked. Leave the interface blank for injection-only mode, or fill in a real interface to capture from the network and accept injected packets simultaneously. Click **Start** before running the injector. Packets sent while capture is stopped are silently discarded — the injector prints `⏸` for each discarded packet and `✓` once recording begins.
+
+> Injected packets bypass the profile's capture pre-filter so they always appear regardless of the interface filter. The display filter still applies normally.
 
 **Modes (`--mode`)**
 
@@ -141,6 +143,28 @@ The device runs in `feed` mode by default — it sends UDP datagrams to `127.0.0
 
 > `chat`, `sender`, and `echo` modes use the real LAN interface and require Npcap or Administrator to capture.
 
+### Fault Injector (`fault_injector.py`)
+
+Injects packets with deliberate problems to test checksum warning indicators and decoder error handling. Useful for exercising the `has_warnings`, `has_error`, and `has_issues` display filters.
+
+**Setup:** select a profile with **Enable injection** checked (interface can be blank or a real interface) and click **Start**.
+
+```bash
+pixi run inject-faults          # one cycle of all scenarios then loop
+```
+
+Each cycle sends seven scenario packets via `/ws/inject`:
+
+| Scenario | Description |
+|----------|-------------|
+| `healthy-udp` | Valid UDP datagram — no warnings |
+| `bad-ip-cksum` | Correct UDP payload, bad IP header checksum → amber row |
+| `bad-udp-cksum` | Correct IP header, bad UDP checksum → amber row |
+| `bad-tcp-cksum` | Valid TCP segment with bad TCP checksum → amber row |
+| `decoder-err` | Valid checksums but malformed NC-Frame payload → decoder error, red row |
+| `both` | Bad IP checksum **and** malformed NC-Frame → both indicators |
+| `healthy-tcp` | Valid TCP segment — no warnings |
+
 ---
 
 ## UI Overview
@@ -151,11 +175,11 @@ The toolbar has two rows:
 
 **Row 1 — capture controls**
 
-`NetCapture` brand · interface/profile selector · `Start`/`Stop` · `Clear` · capture mode badge · ⚙ settings (far right)
+`NetCapture` brand · interface/profile selector · BPF filter input + presets *(Npcap only)* · `Start`/`Stop` · `Clear` · capture mode badge · ⚙ settings (far right)
 
 **Row 2 — filter bar**
 
-`Presets` dropdown · filter input · `Apply` · `Clear` · BPF filter input + presets button *(Npcap mode only)*
+`Presets` dropdown · filter input · `Apply` · `Clear` — the active filter is persisted across sessions
 
 ### Settings Panel (⚙ gear icon)
 
@@ -163,17 +187,17 @@ Click the gear icon at the top-right to open the settings panel:
 
 | Section | Setting | Description |
 |---------|---------|-------------|
-| **Recording** | Export ▸ | **PCAP** — Wireshark-compatible pcap file; **JSON** — full packet data |
-| | Import ▸ | **PCAP** — load a pcap file; **JSON** — load a previous JSON export; **CSV** — Wireshark CSV export |
-| **Addresses** | Manage Addresses | Open the address book editor |
-| | Export / Import Address Book | Save or load address book entries |
-| **Filter Presets** | Manage Presets | Open the preset editor |
-| | Export / Import Presets | Save or load filter presets |
+| **Recording** | Export ▸ | **PCAP** — Wireshark-compatible pcap file; **CSV**; **JSON** — full packet data |
+| | Import ▸ | **PCAP** — load a pcap file; **CSV**; **JSON** — load a previous export |
+| **Addresses** | Addresses ▸ | **Manage** — open the address book editor; **Export / Import** — save or load entries |
+| **Filter Presets** | Filter Presets ▸ | **Manage** — open the preset editor; **Export / Import** — save or load presets |
+| **Capture Profiles** | Capture Profiles ▸ | **Manage** — open the profile editor; **Export / Import** — save or load user-created profiles |
 | **Capture** | Buffer size | Max packets kept in memory (ring buffer size) |
 | | Ring buffer | On = drop oldest when full; Off = keep all until stopped |
 | | Auto-stop after | Stop capture automatically after N packets (0 = unlimited) |
 | **Display** | Timestamp | Relative (MM:SS.mmm from start) or Absolute (HH:MM:SS.mmm) |
 | | Auto-scroll | Follow newest packets during live capture |
+| | Track matching | **Strict** — follow by exact 5-tuple (protocol + src IP + dst IP + src port + dst port + interpreter); **Loose** — follow by protocol + src IP + dst IP + dst port only (survives TCP reconnects and source-port changes) |
 | | Columns | Toggle visibility of individual packet table columns |
 
 All display and capture settings are persisted to `localStorage` and restored on next load.
@@ -183,12 +207,22 @@ All display and capture settings are persisted to `localStorage` and restored on
 - **Resizable columns** — hover a column header to reveal a drag handle on its right edge; drag to resize.
 - **Hideable columns** — toggle individual columns on/off from Settings → Display → Columns.
 - **Auto-scroll** — when enabled, the table follows the newest packet during live capture. Scrolling up pauses auto-scroll; scrolling back to the bottom resumes it.
+- **Packet health indicators** — rows with network-level issues are highlighted with a colored left border: amber for checksum warnings (bad IP/TCP/UDP checksum), red for decoder errors. A `⚠` icon also appears in the Info cell with a tooltip showing the issue details.
 - **Right-click context menu** on Source, Destination, or Protocol cells:
   - **Filter for / Exclude** — appends an `ip.src ==`, `ip.dst ==`, or `proto ==` condition to the filter
   - **Filter / Exclude by name** — appears when the address has a resolved name; uses `src_name`/`dst_name`
   - **Filter source/dest port** — appends a port condition
   - **Add IP to address book** — opens the address book editor pre-filled with the IP
   - **Add IP:Port to address book** — opens the address book editor pre-filled with `IP:port` (shown only when a port is present)
+
+### Packet Detail Panel
+
+Click any row to open the detail panel. It shows:
+
+- **Header** — source → destination, protocol, timestamp, and (when tracking is active) a track status indicator showing the current mode: `Tracking [strict]` or `Tracking [loose]`.
+- **Warnings banner** — displayed immediately below the header when the packet has network-level checksum warnings or a decoder error. Checksum warnings appear in amber; decoder errors appear in red.
+- **Hex viewer** — raw bytes with layer-colored regions (IP header, transport header, payload).
+- **Decoded fields** — structured fields from the protocol interpreter, with type annotations.
 
 ### Address Book Editor
 
@@ -207,7 +241,18 @@ Manage saved filter expressions for quick reuse.
 - **Unified list** — built-in presets and user presets are in one editable list
 - **Restore defaults** — resets the list back to the original built-in presets
 
-Both editors stay open until the user explicitly closes them with the **✕** button or **Cancel** — clicking outside the dialog does nothing.
+### Capture Profile Editor
+
+Open via **Settings ⚙ → Capture Profiles → Manage**. Create, edit, and delete named capture configurations that persist across sessions.
+
+- **Built-in profiles** — shown with a 🔒 lock icon; read-only
+- **User profiles** — fully editable and deletable; stored server-side in `~/.netcapture/profiles.json`
+- **Interface** — type any adapter name, or pick from the dropdown of known interfaces; leave blank when using injection-only mode; comma-separate multiple interfaces for simultaneous capture (npcap/scapy mode only, e.g. `eth0, eth1`)
+- **Enable injection** — when checked, the profile accepts packets via `/ws/inject` alongside (or instead of) real capture; an `INJ` badge appears in the profile list; injected packets bypass the capture pre-filter
+- **Capture Filter** — Python filter syntax (same as the display filter bar); applied as a backend pre-filter to captured packets (not to injected packets)
+- **BPF Filter** — optional kernel-level BPF expression (npcap mode only); applied before packets reach the application
+
+All dialogs stay open until explicitly closed with the **✕** button — clicking outside does nothing.
 
 ---
 
@@ -296,7 +341,21 @@ This enables use cases like piping output from `tshark`, forwarding packets from
 
 #### Custom Profiles
 
-Profiles populate the interface/preset dropdown in the UI. Pass your own list to replace the defaults:
+Profiles populate the interface/profile selector dropdown and bundle an interface, capture filter, and optional BPF filter into a named preset. Users can also create, edit, and delete profiles at runtime via the ✏ pencil button in the toolbar.
+
+**Profile fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | yes | Unique slug (e.g. `"my-device"`) |
+| `name` | yes | Display name shown in the dropdown |
+| `description` | no | Subtitle / tooltip hint |
+| `interface` | no | Adapter name (`"Ethernet"`, `"Wi-Fi"`), `"any"`, `"loopback"`, or comma-separated for multiple interfaces (`"eth0, eth1"`) — multi-interface requires npcap/scapy mode; leave empty when `inject: true` for injection-only mode |
+| `filter` | no | Python-style capture filter applied as a backend pre-filter on both npcap and raw-socket modes (e.g. `"port == 5000"`) |
+| `bpf_filter` | no | Kernel-level BPF filter, npcap mode only (e.g. `"udp port 9001"`, `"tcp and port 443"`) |
+| `inject` | no | `true` — also accept packets via `/ws/inject` alongside the real capture; set `interface` to `""` for injection-only mode (no real capture) |
+
+Pass your own list to `create_router()` to replace the defaults:
 
 ```python
 app.include_router(create_router(
@@ -312,10 +371,6 @@ app.include_router(create_router(
 ), prefix="/netcapture")
 ```
 
-Each profile requires `id`, `name`, `interface`, and `filter`. `description` and `bpf_filter` are optional. `bpf_filter` is a kernel-level BPF expression applied at capture time (Npcap mode only — e.g. `"udp port 9001"`, `"tcp and port 443"`).
-
-The `interface` field accepts the system adapter name (e.g. `"Ethernet"`, `"Wi-Fi"`), `"any"` for the default outbound interface, or `"loopback"` for the Npcap loopback adapter (127.0.0.1 inter-process traffic, requires Npcap).
-
 To extend the defaults rather than replace them:
 
 ```python
@@ -325,6 +380,27 @@ app.include_router(create_router(
     profiles=DEFAULT_PROFILES + [my_profile],
 ), prefix="/netcapture")
 ```
+
+**Profile persistence:**
+
+User-created profiles (added via the UI) are saved to `~/.netcapture/profiles.json` by default. Change the path with the `profiles_path` parameter:
+
+```python
+app.include_router(create_router(
+    profiles_path="/app/data/profiles.json",   # custom path
+    # profiles_path=None,                      # in-memory only (no persistence)
+), prefix="/netcapture")
+```
+
+Built-in profiles (passed via `profiles=`) are always present regardless of the persistence file and cannot be modified or deleted through the UI.
+
+**Capture filter vs BPF filter:**
+
+The `filter` field uses the same Python filter syntax as the display filter bar (e.g. `port == 9001`, `protocol == "UDP" and src_ip == "10.0.0.1"`). It is applied as a pre-filter in the capture thread on both npcap and raw-socket modes.
+
+The `bpf_filter` field uses BPF syntax (e.g. `udp port 9001`) and is applied at the kernel level by Npcap, before packets reach the application. It is more efficient for high-volume captures but only works in npcap mode.
+
+Both filters can be set on the same profile — BPF filters at the kernel level first, then the capture filter narrows further if needed.
 
 #### Custom Interpreters (Protocol Decoders)
 
@@ -457,7 +533,7 @@ Then run `pixi run mock-device --format nc-frame` and start capturing on the loo
 
 | Symbol | What it is |
 |--------|-----------|
-| `create_router(profiles, extra_interpreters, address_book)` | FastAPI router factory |
+| `create_router(profiles, extra_interpreters, address_book, profiles_path)` | FastAPI router factory |
 | `register_interpreter(interp)` | Add an interpreter to the global registry |
 | `Interpreter` | `Protocol` class — use for type hints when building interpreters |
 | `DecodedFrame` | Return type of `decode()` — holds interpreter name + field list |
@@ -680,7 +756,7 @@ NetCapture/
 │   │   ├── capture.py       # Raw socket capture
 │   │   ├── capture_scapy.py # Scapy/Npcap capture (loopback support)
 │   │   ├── pcap_io.py       # PCAP file read/write (no scapy required)
-│   │   ├── profiles.py      # DEFAULT_PROFILES list
+│   │   ├── profiles.py      # DEFAULT_PROFILES + ProfileStore (CRUD + file persistence)
 │   │   ├── interpreters/    # Packet payload decoders
 │   │   │   ├── __init__.py  # registry: register(), find_interpreter(), Interpreter protocol
 │   │   │   └── nc_frame.py  # built-in NC-Frame binary decoder
@@ -702,6 +778,7 @@ NetCapture/
 │   │   │       ├── PacketDetail.svelte    # Hex + decoded field inspector
 │   │   │       ├── AddressBookEditor.svelte  # Resizable address book manager dialog
 │   │   │       ├── PresetEditor.svelte       # Resizable filter preset manager dialog
+│   │   │       ├── ProfileEditor.svelte      # Capture profile manager dialog (CRUD)
 │   │   │       ├── StatsBar.svelte
 │   │   │       ├── Charts.svelte
 │   │   │       └── FieldValue.svelte
@@ -710,7 +787,8 @@ NetCapture/
 │   └── package.json
 ├── tools/
 │   ├── udp_device.py        # Mock UDP device — real UDP traffic via loopback or LAN
-│   └── ws_injector.py       # WebSocket injector — pushes packets via /ws/inject (no admin needed)
+│   ├── ws_injector.py       # WebSocket injector — pushes packets via /ws/inject (no admin needed)
+│   └── fault_injector.py    # Test tool — injects packets with bad checksums and decoder errors
 ├── tests/                   # Pytest unit tests
 └── pixi.toml                # Task runner and environment definitions
 ```
@@ -724,8 +802,6 @@ The filter bar accepts Wireshark-style expressions:
 ```
 src_ip == 192.168.1.1
 protocol == TCP
-dst_port >= 443
-length > 100
 info contains "hello"
 interpreter == nc_frame
 decoded.type == status
@@ -733,12 +809,43 @@ decoded.meta.fw == 1.2.3
 protocol == TCP and dst_port == 443
 src_ip == 10.0.0.1 or src_ip == 10.0.0.2
 not protocol == ICMP
+has_issues
+has_warnings && tcp
+warnings contains "checksum"
 ```
 
-Fields: `src_ip`/`ip.src`, `dst_ip`/`ip.dst`, `ip.addr`, `src_name`, `dst_name`, `addr_name`, `src_port`/`src.port`, `dst_port`/`dst.port`, `port`, `protocol`/`proto`, `info`, `interpreter`, `decoded.<field>`, `decoded.<field>.<nested>`
+**Fields** (with operator):
+
+| Field | Aliases | Description |
+|-------|---------|-------------|
+| `ip.src` | | Source IP (exact or name) |
+| `ip.dst` | | Destination IP (exact or name) |
+| `ip.addr` | | Source **or** destination IP |
+| `src_name` | | Source address book name |
+| `dst_name` | | Destination address book name |
+| `addr_name` | | Either direction address book name |
+| `port` | `tcp.port`, `udp.port` | Source or destination port (exact int) |
+| `src.port` | `tcp.srcport`, `udp.srcport` | Source port |
+| `dst.port` | `tcp.dstport`, `udp.dstport` | Destination port |
+| `proto` | `ip.proto`, `protocol` | Protocol name (case-insensitive exact) |
+| `info` | `frame.info` | Info string (case-insensitive substring for `==`) |
+| `interpreter` | | Interpreter name (e.g. `NC-Frame`) |
+| `warnings` | | Network-level warning list (e.g. `"Bad IP checksum"`) |
+| `decoded.<field>` | | Interpreter field by key |
+| `decoded.<field>.<nested>` | | Nested interpreter field |
+| `decoded.error` | | Decoder error string |
 
 `ip.src` and `ip.dst` also match against resolved address book names, so `ip.src == "MyDevice"` works even though it's an IP field. `src_name`/`dst_name`/`addr_name` match exclusively on resolved names.
 
-Operators: `==`, `!=`, `<`, `<=`, `>`, `>=`, `contains`
+**Bare-word flags** (no operator — evaluate to true/false):
 
-Combiners: `and`, `or`, `not`
+| Flag | Matches when |
+|------|-------------|
+| `has_warnings` | Packet has one or more network-level warnings (e.g. bad checksum) |
+| `has_error` | Packet has a decoder error |
+| `has_issues` | Packet has warnings **or** a decoder error |
+| `tcp`, `udp`, `icmp`, `arp`, … | Protocol shorthand — same as `proto == tcp` |
+
+**Operators:** `==`, `!=`, `contains`
+
+**Combiners:** `and` / `&&`, `or` / `||`, `not` / `!`
