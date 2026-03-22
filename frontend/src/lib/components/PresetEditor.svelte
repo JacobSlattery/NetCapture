@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte'
+  import { parseFilter } from '../filter'
 
   type Preset = { title: string; filter: string }
 
@@ -12,13 +13,19 @@
   let newTitle  = ''
   let newFilter = ''
   let dirty     = false
+  let filterErr = ''
 
   function markDirty() { dirty = true }
+
+  $: {
+    const f = newFilter.trim()
+    filterErr = f ? (parseFilter(f).valid ? '' : parseFilter(f).error ?? 'Invalid filter') : ''
+  }
 
   function addPreset() {
     const title  = newTitle.trim()
     const filter = newFilter.trim()
-    if (!title || !filter) return
+    if (!title || !filter || filterErr) return
     local = [...local, { title, filter }]
     newTitle  = ''
     newFilter = ''
@@ -167,14 +174,18 @@
           placeholder="Preset name" />
         <input bind:value={newFilter} on:keydown={handleNewKey}
           class="flex-1 bg-(--nc-surface-1) text-(--nc-fg) border border-(--nc-border)
-                 rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-blue-500"
+                 rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-blue-500
+                 {filterErr ? 'border-red-500!' : ''}"
           placeholder="ip.src == 192.168.1.1 and proto == UDP" />
-        <button on:click={addPreset} disabled={!newTitle.trim() || !newFilter.trim()}
+        <button on:click={addPreset} disabled={!newTitle.trim() || !newFilter.trim() || !!filterErr}
           class="shrink-0 bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed
                  text-white px-3 py-1 rounded text-xs font-semibold transition-colors">
           Add
         </button>
       </div>
+      {#if filterErr}
+        <div class="text-[10px] text-red-400 mt-1 px-1">{filterErr}</div>
+      {/if}
     </div>
 
     <!-- Footer -->

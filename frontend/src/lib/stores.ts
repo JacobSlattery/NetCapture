@@ -3,7 +3,7 @@ import { parseFilter, matchesFilter } from './filter'
 import type {
   Packet, NetworkInterface, Stats, ChartPoint,
   CaptureMode, ConnectionStatus, CaptureProfile, TrackFingerprint,
-  AddressBookEntry,
+  AddressBookEntry, WatchEntry, WatchValue,
 } from './types'
 
 // All captured packets (capped at MAX_PACKETS in captureService)
@@ -134,6 +134,31 @@ export const trackStrictness = writable<'strict' | 'loose'>(
   (localStorage.getItem('nc:trackStrictness') as 'strict' | 'loose') ?? 'strict'
 )
 trackStrictness.subscribe(v => localStorage.setItem('nc:trackStrictness', v))
+
+// ── Watchlist ────────────────────────────────────────────────────────────────
+
+/** Whether the watchlist panel is visible */
+export const watchlistOpen = writable<boolean>(
+  localStorage.getItem('nc:watchlistOpen') === 'true'
+)
+watchlistOpen.subscribe(v => localStorage.setItem('nc:watchlistOpen', String(v)))
+
+/** Active watch entries — persisted */
+export const watchEntries = writable<WatchEntry[]>((() => {
+  try { return JSON.parse(localStorage.getItem('nc:watchEntries') ?? '[]') }
+  catch { return [] }
+})())
+{
+  let first = true
+  watchEntries.subscribe(v => {
+    if (first) { first = false; return }
+    localStorage.setItem('nc:watchEntries', JSON.stringify(v))
+  })
+}
+
+/** Runtime watch values — keyed by entry ID, NOT persisted */
+export const watchValues = writable<Record<string, WatchValue>>({})
+
 
 // Derived filtered packet list using the Wireshark-style filter parser.
 // An invalid filter expression shows all packets (no filtering applied).

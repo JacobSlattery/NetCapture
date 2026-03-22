@@ -19,7 +19,7 @@ from pathlib import Path
 # Make the backend package importable without an install step
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
 
-from capture import parse_packet  # noqa: E402
+from netcapture.capture import parse_packet  # noqa: E402
 
 
 # ── Packet builders ───────────────────────────────────────────────────────────
@@ -146,7 +146,7 @@ class TestTCP:
     def test_basic_fields(self):
         pkt = parse_packet(make_tcp_pkt(), 0.0, 1)
         assert pkt is not None
-        assert pkt["protocol"] == "HTTP"   # port 80
+        assert pkt["protocol"] == "TCP"   # SYN has no payload → falls back to TCP
         assert pkt["src_port"] == 54321
         assert pkt["dst_port"] == 80
 
@@ -173,11 +173,27 @@ class TestTCP:
         assert "RST" in pkt["flags"]
 
     def test_tls_label_on_443(self):
+        # SYN has no TLS payload → falls back to TCP
         pkt = parse_packet(make_tcp_pkt(dport=443), 0.0, 1)
+        assert pkt["protocol"] == "TCP"
+
+    def test_tls_label_with_payload(self):
+        # TLS record header: type=22 (handshake), version=0x0303 (TLS 1.2), length=5
+        tls_payload = bytes([22, 3, 3, 0, 5]) + b"\x00" * 5
+        transport = _tcp(54321, 443, flags=0x10, payload=tls_payload)
+        raw = _ip_header(6, "10.0.0.1", "10.0.0.2", len(transport)) + transport
+        pkt = parse_packet(raw, 0.0, 1)
         assert pkt["protocol"] == "TLS"
 
     def test_ssh_label_on_22(self):
+        # SYN has no SSH payload → falls back to TCP
         pkt = parse_packet(make_tcp_pkt(dport=22), 0.0, 1)
+        assert pkt["protocol"] == "TCP"
+
+    def test_ssh_label_with_payload(self):
+        transport = _tcp(54321, 22, flags=0x10, payload=b"SSH-2.0-OpenSSH")
+        raw = _ip_header(6, "10.0.0.1", "10.0.0.2", len(transport)) + transport
+        pkt = parse_packet(raw, 0.0, 1)
         assert pkt["protocol"] == "SSH"
 
     def test_unknown_port_falls_back_to_tcp(self):

@@ -84,13 +84,20 @@ function flattenDecoded(v: DecodedValue): string[] {
 /**
  * Navigate a decoded value along a dot-separated path, then flatten the result.
  * e.g. path ['fw'] on {fw: '1.2.3', board: 'A'} → ['1.2.3']
- * Arrays are searched element-by-element at each step.
+ * Numeric segments index into arrays: path ['items', '0', 'name'] accesses items[0].name
+ * Non-numeric segments on arrays search all elements (wildcard).
  */
-function resolveDecodedPath(v: DecodedValue, path: string[]): string[] {
+export function resolveDecodedPath(v: DecodedValue, path: string[]): string[] {
   if (path.length === 0) return flattenDecoded(v)
   const [head, ...rest] = path
-  if (Array.isArray(v))
+  if (Array.isArray(v)) {
+    // Numeric index → access specific element
+    const idx = /^\d+$/.test(head) ? parseInt(head, 10) : -1
+    if (idx >= 0 && idx < v.length) return resolveDecodedPath(v[idx] as DecodedValue, rest)
+    if (idx >= 0) return []  // out of bounds
+    // Non-numeric → search all elements
     return v.flatMap(item => resolveDecodedPath(item as DecodedValue, path))
+  }
   if (typeof v === 'object' && v !== null) {
     const obj = v as Record<string, DecodedValue>
     const key = Object.keys(obj).find(k => k.toLowerCase() === head)

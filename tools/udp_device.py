@@ -92,6 +92,19 @@ def _make_nc_frame(seq: int) -> bytes:
     history = [round(20.0 + 5.0 * math.sin((seq - i) * 0.3), 2) for i in range(3)]
     # Dict field: device metadata
     meta    = {"fw": "1.2.3", "sensor": "BME280", "channel": seq % 4}
+    # Deeply-nested field: list of sensor groups, each with its own readings list
+    sensors = [
+        {
+            "id": "A",
+            "active": seq % 3 != 0,
+            "readings": [round(temp + i * 0.5, 2) for i in range(3)],
+        },
+        {
+            "id": "B",
+            "active": seq % 3 == 0,
+            "readings": [round(temp - i * 0.5, 2) for i in range(2)],
+        },
+    ]
 
     fields = [
         _nc_field("seq",     0x03, struct.pack("!I", seq & 0xFFFFFFFF)),
@@ -102,6 +115,7 @@ def _make_nc_frame(seq: int) -> bytes:
         _nc_field("rssi",    0x02, struct.pack("!H", rssi)),
         _nc_json_field("history", history),
         _nc_json_field("meta",    meta),
+        _nc_json_field("sensors", sensors),
     ]
     return bytes([0x4E, 0x43, 0x01, len(fields)]) + b"".join(fields)
 

@@ -61,7 +61,7 @@
     <span class="text-(--nc-fg-4)">RATE</span>
     <span class="text-(--nc-fg) font-bold">{$stats.packets_per_sec}/s</span>
   </div>
-  {#if $captureFilter ?? '' !== ''}
+  {#if ($captureFilter ?? '') !== ''}
     <div class="flex items-center gap-1 whitespace-nowrap" style="color: var(--nc-p-tcp)">
       <span>SHOWN</span>
       <span class="font-bold">{fmtNum($filteredPackets.length)}</span>

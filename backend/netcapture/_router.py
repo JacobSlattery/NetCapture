@@ -41,6 +41,7 @@ from pydantic import BaseModel
 from ._manager import manager, reset_session_start, _get_session_start
 from .interpreters import Interpreter, register
 from .profiles import ProfileStore, DEFAULT_PROFILES
+from .watchlists import WatchlistStore, DEFAULT_WATCHLISTS
 
 
 def _parse_pcap_bytes(data: bytes) -> list[dict]:
@@ -56,7 +57,7 @@ def _parse_pcap_bytes(data: bytes) -> list[dict]:
 
     # ── scapy path ────────────────────────────────────────────────────────────
     try:
-        from scapy.utils import rdpcap as _rdpcap
+        from scapy.utils import rdpcap as _rdpcap # type: ignore
         from .capture_scapy import _parse_scapy
 
         pkts = _rdpcap(io.BytesIO(data))
@@ -141,12 +142,17 @@ class ProfileBody(BaseModel):
     inject:      bool = False
 
 
+MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
+
+
 def create_router(
     *,
     profiles: list[dict] | None = None,
     extra_interpreters: Sequence[Interpreter] | None = None,
     address_book: list[dict] | None = None,
+    watchlists: list[dict] | None = None,
     profiles_path: Path | str | None = Path.home() / ".netcapture" / "profiles.json",
+    watchlists_path: Path | str | None = Path.home() / ".netcapture" / "watchlists.json",
 ) -> APIRouter:
     """
     Return an APIRouter with all NetCapture HTTP and WebSocket routes.
@@ -165,6 +171,10 @@ def create_router(
           - name: str
           - match(pkt: dict, payload: bytes) -> bool
           - decode(payload: bytes) -> DecodedFrame
+    watchlists:
+        List of watchlist entry dicts to expose via /api/watchlists.  Each
+        dict must have at least ``id``, ``label``, ``fieldPath``, and
+        ``matcher`` keys.  If omitted, an empty default list is used.
     """
     if extra_interpreters:
         for interp in extra_interpreters:
@@ -173,6 +183,11 @@ def create_router(
     _store = ProfileStore(
         defaults=profiles if profiles is not None else DEFAULT_PROFILES,
         path=Path(profiles_path) if profiles_path is not None else None,
+    )
+
+    _wl_store = WatchlistStore(
+        defaults=watchlists if watchlists is not None else DEFAULT_WATCHLISTS,
+        path=Path(watchlists_path) if watchlists_path is not None else None,
     )
 
     _address_book: list[dict] = list(address_book) if address_book else []
@@ -246,14 +261,53 @@ def create_router(
             raise HTTPException(status_code=404, detail="Profile not found or is a built-in")
         return {"status": "ok"}
 
+    # ── Watchlist CRUD ────────────────────────────────────────────────────────
+
+    @router.get("/api/watchlists")
+    async def list_watchlists():
+        return {"watchlists": _wl_store.list()}
+
+    @router.post("/api/watchlists")
+    async def create_watchlist(body: dict):
+        entry = _wl_store.create(body)
+        return {"watchlist": entry}
+
+    @router.put("/api/watchlists/{entry_id}")
+    async def update_watchlist(entry_id: str, body: dict):
+        updated = _wl_store.update(entry_id, body)
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Watchlist entry not found or is a built-in")
+        return {"watchlist": updated}
+
+    @router.delete("/api/watchlists/{entry_id}")
+    async def delete_watchlist(entry_id: str):
+        if not _wl_store.delete(entry_id):
+            raise HTTPException(status_code=404, detail="Watchlist entry not found or is a built-in")
+        return {"status": "ok"}
+
+    @router.put("/api/watchlists")
+    async def replace_watchlists(payload: dict):
+        entries = payload.get("entries", [])
+        if not isinstance(entries, list):
+            raise HTTPException(status_code=400, detail="Expected 'entries' array")
+        result = _wl_store.replace_all(entries)
+        return {"watchlists": result}
+
+    # ── Address book ──────────────────────────────────────────────────────────
+
     @router.get("/api/address-book")
     async def get_address_book():
         return {"entries": _address_book}
 
+    MAX_ADDRESS_BOOK_ENTRIES = 1000
+
     @router.put("/api/address-book")
     async def put_address_book(payload: dict):
         nonlocal _address_book
-        _address_book = payload.get("entries", [])
+        entries = payload.get("entries", [])
+        if not isinstance(entries, list) or len(entries) > MAX_ADDRESS_BOOK_ENTRIES:
+            raise HTTPException(status_code=400, detail=f"entries must be a list with at most {MAX_ADDRESS_BOOK_ENTRIES} items")
+        _address_book = entries
         return {"status": "ok"}
 
     @router.get("/api/capture/status")
@@ -265,7 +319,7 @@ def create_router(
         try:
             mode = await manager.start(req.interface, req.filter, bpf_filter=req.bpf_filter)
             return {"status": "ok", "mode": mode}
-        except RuntimeError as exc:
+        except Exception as exc:
             return {"status": "error", "message": str(exc)}
 
     @router.post("/api/capture/stop")
@@ -285,7 +339,7 @@ def create_router(
         buf = manager.get_buffer()
         if not buf:
             return {"status": "error", "message": "No packets to export"}
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         data = await loop.run_in_executor(None, write_pcap, buf, None)
         return StreamingResponse(
             io.BytesIO(data),
@@ -296,8 +350,10 @@ def create_router(
     @router.post("/api/capture/import/pcap")
     async def import_pcap(file: UploadFile = File(...)):
         try:
-            raw = await file.read()
-            loop = asyncio.get_event_loop()
+            raw = await file.read(MAX_UPLOAD_BYTES + 1)
+            if len(raw) > MAX_UPLOAD_BYTES:
+                return {"status": "error", "message": f"File too large (max {MAX_UPLOAD_BYTES // (1024*1024)} MB)"}
+            loop = asyncio.get_running_loop()
             imported = await loop.run_in_executor(None, _parse_pcap_bytes, raw)
 
             # Strip _payload (bytes) and run interpreters — mirrors _emit_packet
@@ -315,27 +371,17 @@ def create_router(
                 p.pop("_header_bytes",   None)
                 p.pop("_payload_offset", None)
 
-            manager.reset()
-            for i, p in enumerate(imported, start=1):
-                p["id"] = i
-            manager._seq = len(imported)
-            manager._buffer.extend(imported)
-
-            msg = json.dumps({"type": "batch", "data": list(manager._buffer)})
-            for q in list(manager._subs):
-                try:
-                    q.put_nowait(msg)
-                except asyncio.QueueFull:
-                    pass
-
-            return {"status": "ok", "count": len(imported)}
+            count = await manager.import_packets(imported)
+            return {"status": "ok", "count": count}
         except Exception as exc:
             return {"status": "error", "message": str(exc)}
 
     @router.post("/api/capture/import/csv")
     async def import_csv(file: UploadFile = File(...)):
         try:
-            raw = await file.read()
+            raw = await file.read(MAX_UPLOAD_BYTES + 1)
+            if len(raw) > MAX_UPLOAD_BYTES:
+                return {"status": "error", "message": f"File too large (max {MAX_UPLOAD_BYTES // (1024*1024)} MB)"}
             text = raw.decode("utf-8-sig")  # strip BOM if present
             reader = _csv.DictReader(io.StringIO(text))
             imported: list[dict] = []
@@ -360,26 +406,14 @@ def create_router(
                     "_epoch_ts": 0.0,
                 })
 
-            manager.reset()
-            for i, p in enumerate(imported, start=1):
-                p["id"] = i
-            manager._seq = len(imported)
-            manager._buffer.extend(imported)
-
-            msg = json.dumps({"type": "batch", "data": list(manager._buffer)})
-            for q in list(manager._subs):
-                try:
-                    q.put_nowait(msg)
-                except asyncio.QueueFull:
-                    pass
-
-            return {"status": "ok", "count": len(imported)}
+            count = await manager.import_packets(imported)
+            return {"status": "ok", "count": count}
         except Exception as exc:
             return {"status": "error", "message": str(exc)}
 
     @router.get("/api/dns/resolve")
     async def dns_resolve(ip: str):
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             result = await asyncio.wait_for(
                 loop.run_in_executor(None, _dns_socket.gethostbyaddr, ip),
@@ -449,7 +483,7 @@ def create_router(
                 ts_str  = f"{int(rel // 60):02d}:{rel % 60:06.3f}"
                 abs_str = now.strftime("%H:%M:%S.") + f"{now.microsecond // 1000:03d}"
 
-                if not manager._running:
+                if not manager.is_running:
                     await websocket.send_text(json.dumps({
                         "ok": False,
                         "discarded": len([p for p in packets if isinstance(p, dict)]),
@@ -476,7 +510,7 @@ def create_router(
                     pkt.setdefault("flags",     None)
 
                     payload_hex = pkt.pop("payload_hex", None)
-                    if payload_hex:
+                    if payload_hex and len(payload_hex) <= 131072:  # 64 KB decoded
                         try:
                             pkt["_payload"] = bytes.fromhex(payload_hex)
                         except ValueError:

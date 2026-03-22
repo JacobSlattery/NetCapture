@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { afterUpdate, tick } from 'svelte'
+  import { afterUpdate, tick, onMount, onDestroy } from 'svelte'
+  import { get } from 'svelte/store'
   import {
     filteredPackets, selectedPacket, isCapturing, trackMode, trackFingerprint, trackPrev,
     captureFilter, addressBook, addressBookPrefill, timestampMode,
@@ -115,7 +116,7 @@
   }
 
   function rowClass(pkt: Packet, isSelected: boolean): string {
-    if (isSelected) return 'bg-[#005999] border-l-2 border-teal-400'
+    if (isSelected) return 'nc-row-selected'
     const issueCls = pkt.decoded?.error  ? 'nc-row-err'
                    : pkt.warnings?.length ? 'nc-row-warn'
                    : ''
@@ -295,12 +296,19 @@
     prevCapturing = $isCapturing
   }
 
-  $: if ($scrollToSelectedTick && $selectedPacket && bodyEl) {
-    const idx = $filteredPackets.findIndex(p => p.id === $selectedPacket!.id)
+  // Manual subscription so this only fires when scrollToSelectedTick changes,
+  // never on selectedPacket or filteredPackets updates (which happen constantly
+  // during recording and would cause effect_update_depth_exceeded in Svelte 5).
+  onMount(() => scrollToSelectedTick.subscribe(tick => {
+    if (!tick || !bodyEl) return
+    const pkt  = get(selectedPacket)
+    const pkts = get(filteredPackets)
+    if (!pkt) return
+    const idx = pkts.findIndex(p => p.id === pkt.id)
     if (idx >= 0) {
       bodyEl.scrollTop = Math.max(0, idx * ROW_H - bodyEl.clientHeight / 2)
     }
-  }
+  }))
 
   afterUpdate(() => {
     if (liveFollow && $isCapturing && bodyEl)

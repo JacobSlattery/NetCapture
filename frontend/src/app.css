@@ -22,8 +22,10 @@
   --nc-proto-ip:      #15803d;   /* green-700  ~8:1  */
   --nc-proto-trans:   #b45309;   /* amber-700  ~5.9:1 */
   --nc-proto-payload: #7e22ce;   /* purple-700 ~9:1  */
-  /* Row hover: partial-selection blue tint */
+  /* Row hover & selection */
   --nc-row-hover: rgb(96 165 250 / 0.22);
+  --nc-row-selected: #dbeafe;
+  --nc-row-selected-border: #2563eb;
 
   /* ── Protocol palette ─────────────────────────────────────────────────── */
   /* Mid-tone values visible against any background; same in both themes.   */
@@ -70,8 +72,10 @@
   --nc-proto-ip:      #86efac;   /* green-300  */
   --nc-proto-trans:   #fcd34d;   /* amber-300  */
   --nc-proto-payload: #d8b4fe;   /* purple-300 */
-  /* Row hover: higher opacity needed to show against dark surfaces */
+  /* Row hover & selection: higher opacity needed to show against dark surfaces */
   --nc-row-hover: rgb(96 165 250 / 0.30);
+  --nc-row-selected: #005999;
+  --nc-row-selected-border: #2dd4bf;
 
   /* Status colours: pastels for dark backgrounds */
   --nc-status-ok:   #4ade80;   /* green-400  */
@@ -126,6 +130,10 @@ select {
 .nc-tint-arp   { background-color: var(--nc-p-arp-tint);   }
 
 /* ── Packet row hover/selection state ───────────────────────────────────── */
+.nc-row-selected {
+  background-color: var(--nc-row-selected);
+  border-left: 2px solid var(--nc-row-selected-border);
+}
 .nc-row-unselected {
   border-left: 2px solid transparent;
   cursor: pointer;

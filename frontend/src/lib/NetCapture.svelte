@@ -4,14 +4,66 @@
   import {
     interfaces, selectedInterface, captureFilter, profiles, activeProfile, addressBook,
     isCapturing, selectedPacket, filteredPackets, filterFocusTick, scrollToSelectedTick,
-    bpfFilter, followStreamPacket,
+    bpfFilter, followStreamPacket, watchlistOpen, watchEntries,
   } from './stores'
-  import { initCaptureService, startCapture, stopCapture, clearCapture, fetchInterfaces, fetchProfiles, fetchAddressBook, exportCapture, fetchCapabilities } from './captureService'
+  import { initCaptureService, startCapture, stopCapture, clearCapture, fetchInterfaces, fetchProfiles, fetchAddressBook, fetchWatchlists, syncWatchlists, exportCapture, fetchCapabilities, seedWatchEntry } from './captureService'
   import Toolbar      from './components/Toolbar.svelte'
   import StatsBar     from './components/StatsBar.svelte'
   import PacketTable  from './components/PacketTable.svelte'
   import PacketDetail from './components/PacketDetail.svelte'
   import FollowStream from './components/FollowStream.svelte'
+  import Watchlist    from './components/Watchlist.svelte'
+  import WatchlistEditor from './components/WatchlistEditor.svelte'
+  import type { Packet, WatchEntry } from './types'
+
+  // ── Watchlist panel width (drag-adjustable, persisted) ─────────────────────
+  const _WL_WIDTH_KEY = 'nc:watchlistWidth'
+  let watchlistWidth: number = (() => {
+    const saved = parseInt(localStorage.getItem(_WL_WIDTH_KEY) ?? '', 10)
+    const max = Math.floor(window.innerWidth / 2)
+    return isNaN(saved) ? 260 : Math.max(160, Math.min(max, saved))
+  })()
+  let wlDragging = false
+  let wlDragStartX = 0
+  let wlDragStartW = 0
+
+  function wlDragStart(e: MouseEvent): void {
+    wlDragging    = true
+    wlDragStartX  = e.clientX
+    wlDragStartW  = watchlistWidth
+    e.preventDefault()
+  }
+  function wlDragMove(e: MouseEvent): void {
+    if (!wlDragging) return
+    const dx = wlDragStartX - e.clientX
+    watchlistWidth = Math.max(160, Math.min(Math.floor(window.innerWidth / 2), wlDragStartW + dx))
+  }
+  function wlDragEnd(): void {
+    if (wlDragging) {
+      localStorage.setItem(_WL_WIDTH_KEY, String(watchlistWidth))
+    }
+    wlDragging = false
+  }
+
+  // ── Watchlist editor state ──────────────────────────────────────────────────
+  let showWatchEditor       = false
+  let watchEditorEntry: WatchEntry | null = null
+  let watchEditorPrefillPkt: Packet | null = null
+  let watchEditorPrefillKey: string | null = null
+
+  function openWatchEditor(prefillPkt: Packet | null = null, prefillKey: string | null = null, editEntry: WatchEntry | null = null) {
+    watchEditorPrefillPkt = prefillPkt
+    watchEditorPrefillKey = prefillKey
+    watchEditorEntry      = editEntry
+    showWatchEditor       = true
+  }
+
+  function closeWatchEditor() {
+    showWatchEditor       = false
+    watchEditorEntry      = null
+    watchEditorPrefillPkt = null
+    watchEditorPrefillKey = null
+  }
 
   /**
    * Full WebSocket URL to the NetCapture backend.
@@ -93,6 +145,13 @@
       return
     }
 
+    // W = toggle watchlist panel (not in input)
+    if (e.key === 'w' && !inInput) {
+      e.preventDefault()
+      watchlistOpen.update(v => !v)
+      return
+    }
+
     // J = next packet, K = prev packet (not in input)
     if ((e.key === 'j' || e.key === 'k') && !inInput) {
       e.preventDefault()
@@ -114,14 +173,25 @@
     initCaptureService(wsUrl, apiBase)
 
     window.addEventListener('keydown', handleKeydown)
+    window.addEventListener('mousemove', wlDragMove)
+    window.addEventListener('mouseup', wlDragEnd)
 
     const savedIfaceName = localStorage.getItem('nc:selectedInterface') ?? ''
     const savedProfileId = localStorage.getItem('nc:activeProfileId')
 
-    const [ifaces, profs, book] = await Promise.all([fetchInterfaces(), fetchProfiles(), fetchAddressBook(), fetchCapabilities()])
+    const [ifaces, profs, book, serverWatchlists] = await Promise.all([fetchInterfaces(), fetchProfiles(), fetchAddressBook(), fetchWatchlists(), fetchCapabilities()])
     if (ifaces.length) interfaces.set(ifaces)
     profiles.set(profs)
     addressBook.set(book)
+
+    // Merge server-provided watchlists with locally-persisted ones
+    if (serverWatchlists.length) {
+      watchEntries.update(local => {
+        const localIds = new Set(local.map(e => e.id))
+        const newEntries = serverWatchlists.filter(e => !localIds.has(e.id))
+        return newEntries.length ? [...local, ...newEntries] : local
+      })
+    }
 
     const savedProf = savedProfileId ? (profs.find(p => p.id === savedProfileId) ?? null) : null
     if (savedProf) {
@@ -138,8 +208,21 @@
     }
   })
 
+  // Sync watchlist changes to backend (debounced, skip first emission)
+  let _wlSyncTimer: ReturnType<typeof setTimeout> | null = null
+  let _wlSkipFirst = true
+  const _wlUnsub = watchEntries.subscribe(() => {
+    if (_wlSkipFirst) { _wlSkipFirst = false; return }
+    if (_wlSyncTimer) clearTimeout(_wlSyncTimer)
+    _wlSyncTimer = setTimeout(() => { syncWatchlists(get(watchEntries)) }, 500)
+  })
+
   onDestroy(() => {
     window.removeEventListener('keydown', handleKeydown)
+    window.removeEventListener('mousemove', wlDragMove)
+    window.removeEventListener('mouseup', wlDragEnd)
+    _wlUnsub()
+    if (_wlSyncTimer) clearTimeout(_wlSyncTimer)
   })
   // Note: capture persists when this component unmounts.
   // captureService owns the WS and all state at module scope.
@@ -168,10 +251,48 @@
     {showCharts ? '▲ hide charts' : '▼ show charts'}
   </button>
 
-  <PacketTable />
-  <PacketDetail />
+  <!-- Main content area: packet table/detail + optional watchlist on right -->
+  <div class="flex flex-1 min-h-0 overflow-hidden">
+    <!-- Left: packet table + detail (takes remaining space) -->
+    <div class="flex flex-col flex-1 min-w-0 min-h-0">
+      <PacketTable />
+      <PacketDetail on:watch={(e) => openWatchEditor(e.detail.packet, e.detail.fieldKey)} />
+    </div>
+
+    <!-- Right: watchlist panel with drag handle -->
+    {#if $watchlistOpen}
+      <!-- svelte-ignore a11y-no-static-element-interactions -->
+      <div class="shrink-0 flex items-stretch h-full cursor-col-resize"
+        on:mousedown={wlDragStart}>
+        <div class="w-1 bg-(--nc-border) hover:bg-blue-500/30 transition-colors"></div>
+      </div>
+      <div class="shrink-0 h-full overflow-hidden" style="width:{watchlistWidth}px">
+        <Watchlist on:add={() => openWatchEditor()} on:edit={(e) => openWatchEditor(null, null, e.detail)} />
+      </div>
+    {/if}
+  </div>
 </div>
 
 {#if $followStreamPacket}
   <FollowStream anchor={$followStreamPacket} on:close={() => followStreamPacket.set(null)} />
+{/if}
+
+{#if showWatchEditor}
+  <WatchlistEditor
+    editEntry={watchEditorEntry}
+    prefillFromPacket={watchEditorPrefillPkt}
+    prefillFieldKey={watchEditorPrefillKey}
+    on:close={closeWatchEditor}
+    on:save={(e) => {
+      const entry = e.detail
+      watchEntries.update(list => {
+        const idx = list.findIndex(x => x.id === entry.id)
+        if (idx >= 0) { list[idx] = entry; return [...list] }
+        return [...list, entry]
+      })
+      if (watchEditorPrefillPkt) seedWatchEntry(entry, watchEditorPrefillPkt)
+      if (!$watchlistOpen) watchlistOpen.set(true)
+      closeWatchEditor()
+    }}
+  />
 {/if}

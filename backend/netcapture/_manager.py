@@ -113,6 +113,7 @@ class CaptureManager:
         self._mode    = "idle"
         self._iface   = "any"
         self._task: asyncio.Task | None = None
+        self._start_lock = asyncio.Lock()
 
         self._filter_terms: list[str] = []
         self._filter_ast = None
@@ -129,6 +130,10 @@ class CaptureManager:
         self._subs: set[asyncio.Queue] = set()
 
     async def start(self, iface: str = "any", filter_str: str = "", bpf_filter: str = "") -> str:
+        async with self._start_lock:
+            return await self._start_locked(iface, filter_str, bpf_filter)
+
+    async def _start_locked(self, iface: str, filter_str: str, bpf_filter: str) -> str:
         if self._running:
             await self.stop()
 
@@ -142,7 +147,7 @@ class CaptureManager:
         # _determine_mode probes using the first interface.
         primary_iface = iface.split(",")[0].strip() if "," in iface else iface
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         mode = await loop.run_in_executor(None, _determine_mode, primary_iface)
 
         if mode == "unavailable":
@@ -174,7 +179,8 @@ class CaptureManager:
             self._task = asyncio.create_task(self._scapy_loop(scapy_iface, pre_filter))
         else:
             bind_ip = get_capture_ip(iface)
-            assert bind_ip is not None
+            if bind_ip is None:
+                raise RuntimeError(f"No IPv4 address found for interface {iface!r}")
             self._task = asyncio.create_task(self._real_loop(bind_ip, pre_filter))
 
         return mode
@@ -208,6 +214,36 @@ class CaptureManager:
 
     def get_buffer(self) -> list[dict]:
         return list(self._buffer)
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    async def import_packets(self, packets: list[dict]) -> int:
+        """
+        Stop any running capture, reset state, and load the given packets.
+
+        Assigns sequential IDs, updates the buffer, and broadcasts a batch
+        message to all subscribers.  Returns the number of imported packets.
+        """
+        if self._running:
+            await self.stop()
+
+        self.reset()
+        for i, p in enumerate(packets, start=1):
+            p["id"] = i
+        self._seq = len(packets)
+        self._buffer.extend(packets)
+
+        if packets:
+            msg = json.dumps({"type": "batch", "data": list(self._buffer)})
+            for q in list(self._subs):
+                try:
+                    q.put_nowait(msg)
+                except asyncio.QueueFull:
+                    pass
+
+        return len(packets)
 
     def status(self) -> dict:
         return {
@@ -333,7 +369,7 @@ class CaptureManager:
 
     async def _inject_loop(self) -> None:
         """Stats ticker for inject mode — no capture, just emit stats every second."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         last_tick = loop.time()
         try:
             while self._running:
@@ -350,7 +386,7 @@ class CaptureManager:
         if pre_filter is not None:
             cap.set_filter(pre_filter)
         cap.start(session_start=_get_session_start())
-        loop      = asyncio.get_event_loop()
+        loop      = asyncio.get_running_loop()
         last_tick = loop.time()
         FLUSH_INTERVAL = 0.05
         try:
@@ -386,7 +422,7 @@ class CaptureManager:
         if pre_filter is not None:
             cap.set_filter(pre_filter)
         cap.start(session_start=_get_session_start())
-        loop      = asyncio.get_event_loop()
+        loop      = asyncio.get_running_loop()
         last_tick = loop.time()
         FLUSH_INTERVAL = 0.05
         try:

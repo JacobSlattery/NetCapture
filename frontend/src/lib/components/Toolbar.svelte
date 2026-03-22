@@ -6,8 +6,10 @@
     addressBook, addressBookPrefill, timestampMode,
     autoScrollEnabled, maxPackets, capturePacketLimit, ringBuffer, columnVisibility,
     bpfFilter, filterFocusTick, filteredPackets, dnsCache, npcapAvailable, trackStrictness,
+    watchlistOpen, watchEntries,
   } from '../stores'
-  import type { CaptureProfile, DecodedValue, AddressBookEntry } from '../types'
+  import { get } from 'svelte/store'
+  import type { CaptureProfile, DecodedValue, AddressBookEntry, WatchEntry } from '../types'
   import type { ColumnVisibility } from '../stores'
   import { exportCapture, importCapture, saveAddressBook, exportPcap, importPcap, exportCsv, importCsv, createProfile, updateProfile, deleteProfile } from '../captureService'
   import { parseFilter, tokenize, KNOWN_FIELDS } from '../filter'
@@ -24,6 +26,14 @@
   let showPresetEditor  = false
   let showProfileEditor = false
   let addressPrefill    = ''
+  let importError       = ''
+  let importErrorTimer: ReturnType<typeof setTimeout> | null = null
+
+  function flashError(msg: string) {
+    importError = msg
+    if (importErrorTimer) clearTimeout(importErrorTimer)
+    importErrorTimer = setTimeout(() => { importError = '' }, 5000)
+  }
 
   // Open address book editor when another component (e.g. PacketTable) requests it
   $: if ($addressBookPrefill !== null) {
@@ -45,64 +55,77 @@
   let importOpen   = false
   let addrOpen     = false
   let presetsOpen  = false
-  let profilesOpen = false
+  let profilesOpen   = false
+  let watchlistMenuOpen = false
   let exportMenuPos   = { x: 0, y: 0 }
   let importMenuPos   = { x: 0, y: 0 }
   let addrMenuPos     = { x: 0, y: 0 }
   let presetsMenuPos  = { x: 0, y: 0 }
   let profilesMenuPos = { x: 0, y: 0 }
+  let watchlistMenuPos = { x: 0, y: 0 }
 
   function openExportMenu(e: MouseEvent): void {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     exportMenuPos = { x: rect.left, y: rect.top }
     exportOpen = !exportOpen
-    importOpen = false; addrOpen = false; presetsOpen = false; profilesOpen = false
+    importOpen = false; addrOpen = false; presetsOpen = false; profilesOpen = false; watchlistMenuOpen = false
   }
 
   function openImportMenu(e: MouseEvent): void {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     importMenuPos = { x: rect.left, y: rect.top }
     importOpen = !importOpen
-    exportOpen = false; addrOpen = false; presetsOpen = false; profilesOpen = false
+    exportOpen = false; addrOpen = false; presetsOpen = false; profilesOpen = false; watchlistMenuOpen = false
   }
 
   function openAddrMenu(e: MouseEvent): void {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     addrMenuPos = { x: rect.left, y: rect.top }
     addrOpen = !addrOpen
-    exportOpen = false; importOpen = false; presetsOpen = false; profilesOpen = false
+    exportOpen = false; importOpen = false; presetsOpen = false; profilesOpen = false; watchlistMenuOpen = false
   }
 
   function openPresetsMenu(e: MouseEvent): void {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     presetsMenuPos = { x: rect.left, y: rect.top }
     presetsOpen = !presetsOpen
-    exportOpen = false; importOpen = false; addrOpen = false; profilesOpen = false
+    exportOpen = false; importOpen = false; addrOpen = false; profilesOpen = false; watchlistMenuOpen = false
   }
 
   function openProfilesMenu(e: MouseEvent): void {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     profilesMenuPos = { x: rect.left, y: rect.top }
     profilesOpen = !profilesOpen
-    exportOpen = false; importOpen = false; addrOpen = false; presetsOpen = false
+    exportOpen = false; importOpen = false; addrOpen = false; presetsOpen = false; watchlistMenuOpen = false
+  }
+
+  function openWatchlistMenu(e: MouseEvent): void {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    watchlistMenuPos = { x: rect.left, y: rect.top }
+    watchlistMenuOpen = !watchlistMenuOpen
+    exportOpen = false; importOpen = false; addrOpen = false; presetsOpen = false; profilesOpen = false
   }
 
   async function handleCaptureImport(e: Event): Promise<void> {
     const file = (e.target as HTMLInputElement).files?.[0]
     if (!file) return
-    try { await importCapture(file) } catch (err) { console.error('[import]', err) }
+    try { await importCapture(file) } catch (err: any) { flashError(`Import failed: ${err?.message ?? err}`) }
     finally { captureFileInput.value = '' }
   }
 
-  function handlePcapImport(e: Event) {
+  async function handlePcapImport(e: Event) {
     const file = (e.target as HTMLInputElement).files?.[0]
-    if (file) { importPcap(file).catch(console.error); (e.target as HTMLInputElement).value = '' }
+    if (!file) return
+    try { await importPcap(file) } catch (err: any) { flashError(`PCAP import failed: ${err?.message ?? err}`) }
+    finally { (e.target as HTMLInputElement).value = '' }
     showSettings = false
   }
 
-  function handleCsvImport(e: Event) {
+  async function handleCsvImport(e: Event) {
     const file = (e.target as HTMLInputElement).files?.[0]
-    if (file) { importCsv(file).catch(console.error); (e.target as HTMLInputElement).value = '' }
+    if (!file) return
+    try { await importCsv(file) } catch (err: any) { flashError(`CSV import failed: ${err?.message ?? err}`) }
+    finally { (e.target as HTMLInputElement).value = '' }
     showSettings = false
   }
 
@@ -137,18 +160,38 @@
   async function handleProfileImport(e: Event): Promise<void> {
     const file = (e.target as HTMLInputElement).files?.[0]
     if (!file) return
-    file.text().then(async text => {
+    try {
+      const text = await file.text()
+      const parsed = JSON.parse(text) as CaptureProfile[]
+      if (!Array.isArray(parsed)) throw new Error('Expected a JSON array')
+      const existingIds = new Set($profiles.map(p => p.id))
+      for (const p of parsed) {
+        if (existingIds.has(p.id)) continue
+        const { id: _id, builtin: _builtin, ...data } = p
+        await createProfile(data as Omit<CaptureProfile, 'id' | 'builtin'>)
+      }
+    } catch (err) { console.error('[profile-import]', err) }
+    finally { profileFileInput.value = '' }
+  }
+
+  // ── Watchlist export / import ──────────────────────────────────────────────
+  let watchlistFileInput: HTMLInputElement
+
+  function exportWatchlist(): void {
+    const data = get(watchEntries)
+    download('netcapture-watchlist.json', JSON.stringify(data, null, 2))
+  }
+
+  function handleWatchlistImport(e: Event): void {
+    const file = (e.target as HTMLInputElement).files?.[0]
+    if (!file) return
+    file.text().then(text => {
       try {
-        const parsed = JSON.parse(text) as CaptureProfile[]
-        if (!Array.isArray(parsed)) throw new Error('Expected a JSON array')
-        const existingIds = new Set($profiles.map(p => p.id))
-        for (const p of parsed) {
-          if (existingIds.has(p.id)) continue
-          const { id: _id, builtin: _builtin, ...data } = p
-          await createProfile(data as Omit<CaptureProfile, 'id' | 'builtin'>)
-        }
-      } catch (err) { console.error('[profile-import]', err) }
-    }).finally(() => { profileFileInput.value = '' })
+        const data = JSON.parse(text) as WatchEntry[]
+        if (!Array.isArray(data)) throw new Error('Expected a JSON array')
+        watchEntries.update(list => [...list, ...data.map(entry => ({ ...entry, id: crypto.randomUUID(), matcher: { ...entry.matcher } }))])
+      } catch (err) { console.error('[watchlist-import]', err) }
+    }).finally(() => { watchlistFileInput.value = '' })
   }
 
   function exportPresets(): void {
@@ -337,16 +380,30 @@
     }
   }
 
-  $: discoveredDecodedPaths = (() => {
-    const out = new Set<string>()
-    for (const pkt of $packets) {
+  // Incremental: only scan packets we haven't seen yet to discover new decoded paths.
+  let _decodedPathSet = new Set<string>()
+  let _decodedScanIdx = 0
+  let discoveredDecodedPaths: string[] = []
+  $: {
+    const allPkts = $packets
+    // Reset if the store was cleared (import / session reset)
+    if (allPkts.length < _decodedScanIdx) {
+      _decodedPathSet = new Set<string>()
+      _decodedScanIdx = 0
+    }
+    const prevSize = _decodedPathSet.size
+    for (let i = _decodedScanIdx; i < allPkts.length; i++) {
+      const pkt = allPkts[i]
       if (!pkt.decoded) continue
       for (const field of pkt.decoded.fields) {
-        collectDecodedPaths(field.value, `decoded.${field.key}`, out)
+        collectDecodedPaths(field.value, `decoded.${field.key}`, _decodedPathSet)
       }
     }
-    return [...out].sort()
-  })()
+    _decodedScanIdx = allPkts.length
+    if (_decodedPathSet.size !== prevSize || discoveredDecodedPaths.length === 0) {
+      discoveredDecodedPaths = [..._decodedPathSet].sort()
+    }
+  }
 
   // ── Autocomplete suggestions ───────────────────────────────────────────────
 
@@ -374,7 +431,9 @@
       if (last.kind === 'not')                                              return 'after-not'
       if (last.kind === 'eq' || last.kind === 'neq' || last.kind === 'contains') return 'after-op'
       if (last.kind === 'word') {
-        return KNOWN_FIELDS.has(last.value.toLowerCase()) ? 'after-field' : 'after-value'
+        const val = last.value.toLowerCase()
+        if (KNOWN_FIELDS.has(val) || val.startsWith('decoded.')) return 'after-field'
+        return 'after-value'
       }
       if (last.kind === 'rp') return 'after-value'
     } catch { /* incomplete token stream — fall through */ }
@@ -430,7 +489,8 @@
   let focused       = false
   let selectedIdx   = -1
 
-  $: pendingFilter = $captureFilter
+  // Sync from store only when the input is NOT focused (avoids clobbering in-progress edits)
+  $: if (!focused) pendingFilter = $captureFilter
   $: filterResult      = parseFilter(pendingFilter)
   $: filterEmpty       = !pendingFilter.trim()
   $: filterBorderColor = filterEmpty
@@ -451,7 +511,7 @@
 
   $: userProfileCount = $profiles.filter(p => !p.builtin).length
 
-  function closeDropdowns(): void { showPresets = false; showSettings = false; showBpfPresets = false; exportOpen = false; importOpen = false; addrOpen = false; presetsOpen = false; profilesOpen = false; focused = false }
+  function closeDropdowns(): void { showPresets = false; showSettings = false; showBpfPresets = false; exportOpen = false; importOpen = false; addrOpen = false; presetsOpen = false; profilesOpen = false; watchlistMenuOpen = false; focused = false }
 
   function applyFilter(): void {
     if (!filterResult.valid) return
@@ -525,6 +585,7 @@
 <input bind:this={profileFileInput}  type="file" accept=".json" class="hidden" on:change={handleProfileImport} />
 <input bind:this={pcapFileInput}     type="file" accept=".pcap,.pcapng" class="hidden" on:change={handlePcapImport} />
 <input bind:this={csvFileInput}      type="file" accept=".csv"           class="hidden" on:change={handleCsvImport} />
+<input bind:this={watchlistFileInput} type="file" accept=".json"          class="hidden" on:change={handleWatchlistImport} />
 
 <div class="flex flex-col bg-(--nc-surface-1) border-b border-(--nc-border) select-none shrink-0">
 
@@ -631,8 +692,26 @@
       </span>
     {/if}
 
+    <!-- ── Watchlist toggle ──────────────────────────────────────────────── -->
+    <button
+      on:click={() => watchlistOpen.update(v => !v)}
+      class="flex items-center gap-1 px-1.5 py-1 rounded border transition-colors ml-auto
+             {$watchlistOpen
+               ? 'bg-(--nc-surface-2) border-(--nc-border) text-(--nc-fg)'
+               : 'bg-(--nc-surface) border-(--nc-border) text-(--nc-fg-3) hover:text-(--nc-fg) hover:bg-(--nc-surface-2)'}"
+      title="Toggle watchlist panel (W)"
+    >
+      <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+        <path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z"/>
+        <path fill-rule="evenodd" d="M.664 10.59a1.651 1.651 0 010-1.186A10.004 10.004 0 0110 3c4.257 0 7.893 2.66 9.336 6.41.147.381.146.804 0 1.186A10.004 10.004 0 0110 17c-4.257 0-7.893-2.66-9.336-6.41zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/>
+      </svg>
+      {#if $watchEntries.length > 0}
+        <span class="text-[9px] bg-blue-700 text-white rounded-full px-1 py-px leading-none">{$watchEntries.length}</span>
+      {/if}
+    </button>
+
     <!-- ── Settings dropdown ─────────────────────────────────────────────── -->
-    <div class="relative ml-auto" role="none" on:click|stopPropagation on:keydown|stopPropagation>
+    <div class="relative" role="none" on:click|stopPropagation on:keydown|stopPropagation>
       <button
         on:click|stopPropagation={() => { showSettings = !showSettings; showPresets = false }}
         class="flex items-center px-1 py-1 rounded border transition-colors
@@ -742,6 +821,23 @@
               {#if userProfileCount}
                 <span class="text-[10px] text-(--nc-fg-4)">{userProfileCount}</span>
               {/if}
+              <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
+              </svg>
+            </span>
+          </button>
+
+          <!-- ── Watchlist ──────────────────────────────────────────────── -->
+          <button on:click={openWatchlistMenu}
+            class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs transition-colors
+                   text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg)
+                   {watchlistMenuOpen ? 'bg-(--nc-surface-2) text-(--nc-fg)' : ''}">
+            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z"/>
+              <path fill-rule="evenodd" d="M.664 10.59a1.651 1.651 0 010-1.186A10.004 10.004 0 0110 3c4.257 0 7.893 2.66 9.336 6.41.147.381.146.804 0 1.186A10.004 10.004 0 0110 17c-4.257 0-7.893-2.66-9.336-6.41zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/>
+            </svg>
+            Watchlist
+            <span class="ml-auto flex items-center gap-1.5">
               <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
                 <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
               </svg>
@@ -1180,5 +1276,38 @@
              text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
       Import
     </button>
+  </div>
+{/if}
+
+<!-- ── Watchlist flyout submenu -->
+{#if watchlistMenuOpen}
+  <div
+    class="fixed z-200 min-w-52 bg-(--nc-surface-1) border border-(--nc-border)
+           rounded shadow-xl overflow-hidden"
+    style="right:{window.innerWidth - watchlistMenuPos.x}px; top:{watchlistMenuPos.y}px"
+    role="menu"
+    tabindex="-1"
+    on:click|stopPropagation
+    on:keydown|stopPropagation
+  >
+    <button on:click={() => { exportWatchlist(); watchlistMenuOpen = false; showSettings = false }}
+      disabled={!$watchEntries.length}
+      class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+             text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors
+             disabled:opacity-40 disabled:cursor-not-allowed">
+      Export
+    </button>
+    <button on:click={() => { watchlistFileInput.click(); watchlistMenuOpen = false; showSettings = false }}
+      class="w-full text-left flex items-center gap-2 px-3 py-2 text-xs
+             text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
+      Import
+    </button>
+  </div>
+{/if}
+
+{#if importError}
+  <div class="fixed bottom-4 left-1/2 -translate-x-1/2 z-100 bg-red-900/90 text-red-100 text-xs px-4 py-2 rounded-lg shadow-lg flex items-center gap-2">
+    <span>{importError}</span>
+    <button on:click={() => { importError = '' }} class="text-red-300 hover:text-white ml-2">&times;</button>
   </div>
 {/if}

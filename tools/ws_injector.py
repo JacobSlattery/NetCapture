@@ -41,8 +41,6 @@ import math
 import socket
 import struct
 import time
-import urllib.request
-import urllib.error
 
 # ── NC-Frame builder (mirrors udp_device.py) ──────────────────────────────────
 

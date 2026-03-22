@@ -42,6 +42,15 @@ Passing custom profiles and interpreters
             {"id": "1", "address": "192.168.1.100",      "name": "My Sensor",   "notes": "Living room"},
             {"id": "2", "address": "192.168.1.100:9001",  "name": "Sensor Feed", "notes": "Port-specific name"},
         ],
+        watchlists=[
+            {
+                "id":        "sensor-temp",
+                "label":     "Temperature",
+                "fieldPath": "temperature",
+                "matcher":   {"interpreterName": "My Protocol"},
+                "group":     "Sensor",
+            },
+        ],
     ), prefix="/netcapture")
 
 Registering interpreters independently (before create_router is called)
@@ -63,6 +72,7 @@ from ._router import create_router
 from ._manager import CaptureManager
 from .interpreters import register as register_interpreter, Interpreter, DecodedFrame, DecodedField
 from .profiles import DEFAULT_PROFILES
+from .watchlists import DEFAULT_WATCHLISTS
 
 __all__ = [
     "create_router",
@@ -72,4 +82,5 @@ __all__ = [
     "DecodedFrame",
     "DecodedField",
     "DEFAULT_PROFILES",
+    "DEFAULT_WATCHLISTS",
 ]

@@ -1,8 +1,87 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte'
+  import { createEventDispatcher, onDestroy, onMount } from 'svelte'
   import { selectedPacket, trackMode, trackFingerprint, trackPrev, isCapturing, connectionStatus, trackLastUpdate, trackStrictness } from '../stores'
-  import type { Packet, TrackFingerprint } from '../types'
+  import type { Packet, TrackFingerprint, DecodedValue } from '../types'
   import FieldValue from './FieldValue.svelte'
+  import ContextMenu from './ContextMenu.svelte'
+
+  const dispatch = createEventDispatcher<{ watch: { packet: Packet; fieldKey: string } }>()
+
+  // ── Field context menu ────────────────────────────────────────────────────
+  type MenuItem = { label: string; sub?: string; action: () => void } | { separator: true }
+  let fieldCtxMenu: { x: number; y: number; items: MenuItem[] } | null = null
+
+  function copyText(text: string): void {
+    navigator.clipboard.writeText(text).catch(() => {})
+  }
+
+  function valueToString(v: DecodedValue): string {
+    if (v === null || v === undefined) return ''
+    if (typeof v === 'object') return JSON.stringify(v)
+    return String(v)
+  }
+
+  function valueToHex(v: DecodedValue): string {
+    const s = valueToString(v)
+    return [...new TextEncoder().encode(s)].map(b => b.toString(16).padStart(2, '0')).join(' ')
+  }
+
+  function valueToBinary(v: DecodedValue): string {
+    const s = valueToString(v)
+    return [...new TextEncoder().encode(s)].map(b => b.toString(2).padStart(8, '0')).join(' ')
+  }
+
+  function openFieldMenu(e: MouseEvent, fieldKey: string, fieldValue: DecodedValue, pathPrefix: string = ''): void {
+    e.preventDefault()
+    const fullPath = pathPrefix ? `${pathPrefix}.${fieldKey}` : fieldKey
+    const strVal = valueToString(fieldValue)
+    const items: MenuItem[] = [
+      { label: 'Add to Watchlist', sub: fullPath, action: () => { if (p) dispatch('watch', { packet: p, fieldKey: fullPath }) } },
+    ]
+
+    // For objects: add sub-items for each key
+    if (fieldValue !== null && typeof fieldValue === 'object' && !Array.isArray(fieldValue)) {
+      const obj = fieldValue as Record<string, DecodedValue>
+      const keys = Object.keys(obj)
+      if (keys.length > 0 && keys.length <= 20) {
+        items.push({ separator: true })
+        for (const k of keys) {
+          const subPath = `${fullPath}.${k}`
+          const subStr = valueToString(obj[k] as DecodedValue)
+          items.push({
+            label: `Watch ${k}`,
+            sub: subStr.length > 20 ? subStr.slice(0, 20) + '…' : subStr,
+            action: () => { if (p) dispatch('watch', { packet: p, fieldKey: subPath }) },
+          })
+        }
+      }
+    }
+
+    // For arrays: add sub-items for each index (capped at 20)
+    if (Array.isArray(fieldValue)) {
+      const arr = fieldValue as DecodedValue[]
+      const limit = Math.min(arr.length, 20)
+      if (limit > 0) {
+        items.push({ separator: true })
+        for (let i = 0; i < limit; i++) {
+          const subPath = `${fullPath}.${i}`
+          const subStr = valueToString(arr[i] as DecodedValue)
+          items.push({
+            label: `Watch [${i}]`,
+            sub: subStr.length > 20 ? subStr.slice(0, 20) + '…' : subStr,
+            action: () => { if (p) dispatch('watch', { packet: p, fieldKey: subPath }) },
+          })
+        }
+      }
+    }
+
+    items.push({ separator: true })
+    items.push({ label: 'Copy value', sub: strVal.length > 30 ? strVal.slice(0, 30) + '...' : strVal, action: () => copyText(strVal) })
+    items.push({ label: 'Copy as hex', action: () => copyText(valueToHex(fieldValue)) })
+    items.push({ label: 'Copy as binary', action: () => copyText(valueToBinary(fieldValue)) })
+
+    fieldCtxMenu = { x: e.clientX, y: e.clientY, items }
+  }
 
   // ── Track state ────────────────────────────────────────────────────────────
   // Tick every second so the "waiting" threshold updates in real-time
@@ -121,6 +200,279 @@
     return m
   }
 
+  // ── JSON sub-field byte scanner ───────────────────────────────────────────
+  // Parses JSON objects/arrays to find character-offset ranges for each key or index,
+  // then stamps those byte ranges in the field map with sub-path IDs like "decoded:meta.fw".
+
+  function _skipJsonValue(s: string, i: number): number {
+    if (i >= s.length) return i
+    const c = s[i]
+    if (c === '"') {
+      i++
+      while (i < s.length) {
+        if (s[i] === '\\') { i += 2; continue }
+        if (s[i] === '"')  { i++; break }
+        i++
+      }
+    } else if (c === '{' || c === '[') {
+      const close = c === '{' ? '}' : ']'
+      let d = 1; i++
+      while (i < s.length && d > 0) {
+        if (s[i] === '"') { i = _skipJsonValue(s, i); continue }
+        if (s[i] === c)     d++
+        else if (s[i] === close) d--
+        i++
+      }
+    } else {
+      while (i < s.length && s[i] !== ',' && s[i] !== '}' && s[i] !== ']') i++
+    }
+    return i
+  }
+
+  /** Returns Map<key, [pairCharStart, pairCharEnd)> for a JSON object string */
+  function _jsonObjectRanges(s: string): Map<string, [number, number]> {
+    const out = new Map<string, [number, number]>()
+    let i = 0
+    while (i < s.length && s[i] !== '{') i++
+    if (i >= s.length) return out
+    i++
+    while (i < s.length) {
+      while (i < s.length && /\s/.test(s[i])) i++
+      if (s[i] === '}' || i >= s.length) break
+      if (s[i] !== '"') break
+      const pairStart = i
+      i++
+      let key = ''
+      while (i < s.length && s[i] !== '"') {
+        if (s[i] === '\\') { i++ }
+        key += s[i++]
+      }
+      i++ // closing "
+      while (i < s.length && /\s/.test(s[i])) i++
+      if (s[i] !== ':') break
+      i++ // colon
+      while (i < s.length && /\s/.test(s[i])) i++
+      i = _skipJsonValue(s, i)
+      out.set(key, [pairStart, i])
+      while (i < s.length && /\s/.test(s[i])) i++
+      if (s[i] === ',') i++
+    }
+    return out
+  }
+
+  /** Returns Map<index, [itemCharStart, itemCharEnd)> for a JSON array string */
+  function _jsonArrayRanges(s: string): Map<string, [number, number]> {
+    const out = new Map<string, [number, number]>()
+    let i = 0
+    while (i < s.length && s[i] !== '[') i++
+    if (i >= s.length) return out
+    i++
+    let idx = 0
+    while (i < s.length) {
+      while (i < s.length && /\s/.test(s[i])) i++
+      if (s[i] === ']' || i >= s.length) break
+      const start = i
+      i = _skipJsonValue(s, i)
+      out.set(String(idx++), [start, i])
+      while (i < s.length && /\s/.test(s[i])) i++
+      if (s[i] === ',') i++
+    }
+    return out
+  }
+
+  /** Recursively stamp sub-path field IDs onto bytes[] starting at byteBase.
+   *  Structural bytes (braces, brackets, commas, whitespace between items) are
+   *  stamped with `prefix.__struct` so they can be matched independently. */
+  function _applyJsonSubMapping(
+    bytes: number[], m: string[],
+    byteBase: number, jsonStr: string, prefix: string,
+  ): void {
+    const tr = jsonStr.trimStart()
+    const trim = jsonStr.length - tr.length
+    const base = byteBase + trim
+
+    const ranges = tr.startsWith('{') ? _jsonObjectRanges(tr)
+                 : tr.startsWith('[') ? _jsonArrayRanges(tr)
+                 : null
+    if (!ranges) return
+
+    for (const [key, [cs, ce]] of ranges) {
+      const subId = `${prefix}.${key}`
+      for (let i = base + cs; i < base + ce && i < bytes.length; i++) m[i] = subId
+
+      // Find where the value starts within this pair (skip past key + colon for objects)
+      let vi = cs
+      if (tr.startsWith('{')) {
+        while (vi < tr.length && tr[vi] !== ':') vi++
+        vi++ // colon
+        while (vi < tr.length && /\s/.test(tr[vi])) vi++
+      }
+      const valStr = tr.slice(vi, ce).trimStart()
+      if (valStr.startsWith('{') || valStr.startsWith('[')) {
+        const vTrim = tr.slice(vi, ce).length - valStr.length
+        _applyJsonSubMapping(bytes, m, base + vi + vTrim, valStr, subId)
+      }
+    }
+
+    // Any bytes within the JSON structure that still have `prefix` are structural
+    // (braces, brackets, commas, colons, inter-item whitespace) — give them a
+    // distinct sub-path so hovering them doesn't light up the sub-item values.
+    const structId = `${prefix}.__struct`
+    const structEnd = _skipJsonValue(tr, 0)
+    for (let i = base; i < base + structEnd && i < bytes.length; i++) {
+      if (m[i] === prefix) m[i] = structId
+    }
+  }
+
+  // ── Byte-to-field mapping for hex highlighting ─────────────────────────────
+  // Each byte gets a field ID like "eth:Dst MAC" or "decoded:temperature".
+  // Clicking a hex byte highlights the whole range and corresponding tree/decoded field.
+
+  function buildByteFieldMap(bytes: number[], pkt: Packet): string[] {
+    const m: string[] = new Array(bytes.length).fill('')
+    if (!bytes.length) return m
+
+    let off = 0
+
+    // Ethernet
+    if (hasEthHeader(bytes)) {
+      if (bytes.length < 14) return m
+      for (let i = 0;  i < 6;  i++) m[i]     = 'eth:Dst MAC'
+      for (let i = 6;  i < 12; i++) m[i]     = 'eth:Src MAC'
+      for (let i = 12; i < 14; i++) m[i]     = 'eth:Type'
+      off = 14
+
+      const et = (bytes[12] << 8) | bytes[13]
+      if (et === 0x0806 && bytes.length >= off + 28) {
+        for (let i = off;    i < off+8;  i++) m[i] = 'arp:Operation'
+        for (let i = off+8;  i < off+14; i++) m[i] = 'arp:Sender MAC'
+        for (let i = off+14; i < off+18; i++) m[i] = 'arp:Sender IP'
+        for (let i = off+18; i < off+24; i++) m[i] = 'arp:Target MAC'
+        for (let i = off+24; i < off+28; i++) m[i] = 'arp:Target IP'
+        return m
+      }
+      if (et !== 0x0800) return m
+    }
+
+    // IPv4
+    if (bytes.length < off + 20) return m
+    const ihl = (bytes[off] & 0x0f) * 4
+    const ipProto = bytes[off + 9]
+    // Map individual IP fields
+    m[off]     = 'ip:Version/IHL'
+    m[off + 1] = 'ip:DSCP/ECN'
+    for (let i = off+2;  i < off+4;  i++) m[i] = 'ip:IP Length'
+    for (let i = off+4;  i < off+6;  i++) m[i] = 'ip:Identification'
+    for (let i = off+6;  i < off+8;  i++) m[i] = 'ip:Flags/Fragment'
+    m[off + 8] = 'ip:TTL'
+    m[off + 9] = 'ip:Protocol'
+    for (let i = off+10; i < off+12; i++) m[i] = 'ip:Checksum'
+    for (let i = off+12; i < off+16; i++) m[i] = 'ip:Source'
+    for (let i = off+16; i < off+20; i++) m[i] = 'ip:Dest'
+    if (ihl > 20) { for (let i = off+20; i < off+ihl; i++) m[i] = 'ip:Options' }
+    off += ihl
+
+    // Transport
+    if (ipProto === 17 && bytes.length >= off + 8) {
+      for (let i = off;   i < off+2; i++) m[i] = 'trans:Src Port'
+      for (let i = off+2; i < off+4; i++) m[i] = 'trans:Dst Port'
+      for (let i = off+4; i < off+6; i++) m[i] = 'trans:Length'
+      for (let i = off+6; i < off+8; i++) m[i] = 'trans:Checksum'
+      off += 8
+    } else if (ipProto === 6 && bytes.length >= off + 20) {
+      const tcpOff = ((bytes[off+12] >> 4) & 0xf) * 4
+      for (let i = off;    i < off+2;  i++) m[i] = 'trans:Src Port'
+      for (let i = off+2;  i < off+4;  i++) m[i] = 'trans:Dst Port'
+      for (let i = off+4;  i < off+8;  i++) m[i] = 'trans:Seq'
+      for (let i = off+8;  i < off+12; i++) m[i] = 'trans:Ack'
+      m[off+12] = 'trans:Data Offset'
+      m[off+13] = 'trans:Flags'
+      for (let i = off+14; i < off+16; i++) m[i] = 'trans:Window'
+      for (let i = off+16; i < off+18; i++) m[i] = 'trans:Checksum'
+      for (let i = off+18; i < off+20; i++) m[i] = 'trans:Urgent'
+      if (tcpOff > 20) { for (let i = off+20; i < Math.min(off+tcpOff, bytes.length); i++) m[i] = 'trans:Options' }
+      off += tcpOff
+    } else if (ipProto === 1 && bytes.length >= off + 8) {
+      m[off]     = 'trans:Type'
+      m[off + 1] = 'trans:Code'
+      for (let i = off+2; i < off+4; i++) m[i] = 'trans:Checksum'
+      for (let i = off+4; i < off+6; i++) m[i] = 'trans:ID'
+      for (let i = off+6; i < off+8; i++) m[i] = 'trans:Seq'
+      off += 8
+    }
+
+    // Payload — try NC-Frame field-level mapping
+    if (off < bytes.length && pkt.decoded?.interpreterName === 'NC-Frame') {
+      const payStart = off
+      // NC-Frame: magic(2) + version(1) + count(1) + fields
+      if (bytes.length >= payStart + 4 && bytes[payStart] === 0x4E && bytes[payStart+1] === 0x43) {
+        for (let i = payStart; i < payStart + 4; i++) m[i] = 'payload:Header'
+        let foff = payStart + 4
+        const count = bytes[payStart + 3]
+        for (let fi = 0; fi < count && foff < bytes.length; fi++) {
+          const fieldStart = foff
+          // key_len + key
+          const kl = bytes[foff]; foff++
+          if (foff + kl > bytes.length) break
+          let keyStr = ''
+          try { keyStr = new TextDecoder().decode(new Uint8Array(bytes.slice(foff, foff + kl))) } catch { break }
+          foff += kl
+          // tag
+          if (foff >= bytes.length) break
+          const tag = bytes[foff]; foff++
+          // value width
+          let vLen = 0
+          if (tag === 0x01 || tag === 0x06 || tag === 0x08) vLen = 1
+          else if (tag === 0x02 || tag === 0x09) vLen = 2
+          else if (tag === 0x03 || tag === 0x04 || tag === 0x0A) vLen = 4
+          else if (tag === 0x0B || tag === 0x0C || tag === 0x0D) vLen = 8
+          else if (tag === 0x05) { // str
+            if (foff >= bytes.length) break
+            vLen = 1 + bytes[foff]
+          } else if (tag === 0x07 || tag === 0x0E || tag === 0x0F) { // json, hex, strlong
+            if (foff + 1 >= bytes.length) break
+            vLen = 2 + ((bytes[foff] << 8) | bytes[foff + 1])
+          } else break
+          // Capture json content location before advancing foff
+          const jsonContentStart = (tag === 0x07) ? foff + 2 : -1
+          const jsonContentLen   = (tag === 0x07) ? vLen - 2  : 0
+          if (foff + vLen > bytes.length) break
+          foff += vLen
+          const fieldId = `decoded:${keyStr}`
+          for (let i = fieldStart; i < foff; i++) m[i] = fieldId
+          // For json fields: override value bytes with per-key sub-path IDs
+          if (tag === 0x07 && jsonContentLen > 0) {
+            try {
+              const js = new TextDecoder('utf-8', { fatal: false }).decode(
+                new Uint8Array(bytes.slice(jsonContentStart, jsonContentStart + jsonContentLen))
+              )
+              _applyJsonSubMapping(bytes, m, jsonContentStart, js, fieldId)
+            } catch { /* ignore malformed JSON */ }
+          }
+        }
+      }
+    } else if (off < bytes.length) {
+      // Generic payload — mark as payload section
+      for (let i = off; i < bytes.length; i++) if (!m[i]) m[i] = 'payload:Data'
+    }
+    return m
+  }
+
+  // ── Hex highlight state ──────────────────────────────────────────────────
+  let hoveredFieldId: string | null = null
+
+  function handleHexHover(byteIndex: number): void {
+    const fieldId = _byteFieldMap[byteIndex] || null
+    hoveredFieldId = fieldId
+  }
+
+  function handleHexLeave(): void {
+    hoveredFieldId = null
+  }
+
+  // hoveredFieldId is used directly — tree fields use "sec:label" keys,
+  // decoded fields use "decoded:fieldKey" keys, matching buildByteFieldMap()
+
   // ── Build 16-byte rows for the hex dump ────────────────────────────────────
   function hexRows(bytes: number[], lmap: LayerKey[]): { off: number; cells: HexCell[] }[] {
     const rows: { off: number; cells: HexCell[] }[] = []
@@ -196,12 +548,20 @@
     const ipProto = bytes[off+9]
     const srcIp   = bytes.slice(off+12,off+16).join('.')
     const dstIp   = bytes.slice(off+16,off+20).join('.')
+    const ipIdent = (bytes[off+4] << 8) | bytes[off+5]
+    const ipFlags = (bytes[off+6] << 8) | bytes[off+7]
+    const ipCksum = (bytes[off+10] << 8) | bytes[off+11]
     add('ip', `Internet Protocol v${ipVer}`, 'text-[var(--nc-proto-ip)]', [
-      ['Source',    srcIp],
-      ['Dest',      dstIp],
-      ['TTL',       String(ttl)],
-      ['Protocol',  `${ipProto} (${ipProto===6?'TCP':ipProto===17?'UDP':ipProto===1?'ICMP':'?'})`],
-      ['IP Length', `${totLen} bytes`],
+      ['Version/IHL',    `${ipVer} / ${ihl} bytes`],
+      ['DSCP/ECN',       `0x${bytes[off+1].toString(16).padStart(2,'0')}`],
+      ['IP Length',      `${totLen} bytes`],
+      ['Identification', `0x${ipIdent.toString(16).padStart(4,'0')}`],
+      ['Flags/Fragment', `0x${ipFlags.toString(16).padStart(4,'0')}`],
+      ['TTL',            String(ttl)],
+      ['Protocol',       `${ipProto} (${ipProto===6?'TCP':ipProto===17?'UDP':ipProto===1?'ICMP':'?'})`],
+      ['Checksum',       `0x${ipCksum.toString(16).padStart(4,'0')}`],
+      ['Source',         srcIp],
+      ['Dest',           dstIp],
     ])
     off += ihl
 
@@ -258,11 +618,11 @@
     // ── Payload ───────────────────────────────────────────────────────────────
     if (off < bytes.length) {
       const pay = bytes.slice(off)
-      const pre = pay.slice(0, 24).map(b => b.toString(16).padStart(2,'0')).join(' ')
-      add('payload', `Data (${pay.length} bytes)`, 'text-[var(--nc-proto-payload)]', [
-        ['Length',  `${pay.length} bytes`],
-        ['Preview', pre + (pay.length > 24 ? ' …' : '')],
-      ])
+      const payFields: [string, string][] = [['Length', `${pay.length} bytes`]]
+      if (pkt.decoded?.interpreterName === 'NC-Frame' && pay.length >= 4 && pay[0] === 0x4E && pay[1] === 0x43) {
+        payFields.push(['Header', `NC-Frame v${pay[2]}, ${pay[3]} field${pay[3] !== 1 ? 's' : ''}`])
+      }
+      add('payload', `Data (${pay.length} bytes)`, 'text-[var(--nc-proto-payload)]', payFields)
     }
     return S
   }
@@ -289,15 +649,46 @@
     trackPrev.set(null)
   }
 
-  // Diff: keys whose value changed from previous tracked packet
+  // Recursively collect the most-specific changed dot-paths within a value pair.
+  // Returns leaf paths (e.g. "meta.fw") rather than parent paths ("meta") when
+  // possible, so individual sub-rows can be highlighted instead of the whole dict/list.
+  function collectChangedPaths(prev: DecodedValue, curr: DecodedValue, prefix: string): string[] {
+    if (JSON.stringify(prev) === JSON.stringify(curr)) return []
+    if (prev !== null && curr !== null &&
+        typeof prev === 'object' && typeof curr === 'object' &&
+        !Array.isArray(prev) && !Array.isArray(curr)) {
+      const p = prev as Record<string, DecodedValue>
+      const c = curr as Record<string, DecodedValue>
+      const paths: string[] = []
+      for (const k of new Set([...Object.keys(p), ...Object.keys(c)])) {
+        const sub = `${prefix}.${k}`
+        if (!(k in p) || !(k in c)) paths.push(sub)
+        else paths.push(...collectChangedPaths(p[k], c[k], sub))
+      }
+      return paths.length ? paths : [prefix]
+    }
+    if (Array.isArray(prev) && Array.isArray(curr)) {
+      const paths: string[] = []
+      for (let i = 0; i < Math.max(prev.length, curr.length); i++) {
+        const sub = `${prefix}.${i}`
+        if (i >= prev.length || i >= curr.length) paths.push(sub)
+        else paths.push(...collectChangedPaths(prev[i] as DecodedValue, curr[i] as DecodedValue, sub))
+      }
+      return paths.length ? paths : [prefix]
+    }
+    return [prefix]
+  }
+
+  // Diff: granular dot-paths whose value changed (e.g. "meta.fw", not just "meta")
   $: diffChanged = (() => {
     if (!$trackMode || !$trackPrev?.decoded || !decoded) return new Set<string>()
     const prevMap = new Map($trackPrev.decoded.fields.map(f => [f.key, f.value]))
-    return new Set(
-      decoded.fields
-        .filter(f => prevMap.has(f.key) && JSON.stringify(prevMap.get(f.key)) !== JSON.stringify(f.value))
-        .map(f => f.key)
-    )
+    const paths: string[] = []
+    for (const f of decoded.fields) {
+      if (!prevMap.has(f.key)) continue
+      paths.push(...collectChangedPaths(prevMap.get(f.key)!, f.value, f.key))
+    }
+    return new Set(paths)
   })()
 
   // New keys: present in current but absent in previous
@@ -314,6 +705,9 @@
   $: rows          = hexRows(bytes, lmap)
   $: tree          = p ? buildTree(bytes, p) : []
   $: decoded       = p?.decoded ?? null
+  $: _byteFieldMap = p ? buildByteFieldMap(bytes, p) : []
+  // Clear highlight when packet changes
+  $: if (p) hoveredFieldId = null
 
   // Previous packet data for track-mode diffing
   $: prevBytes = $trackPrev ? toBytes($trackPrev.raw_hex ?? '') : []
@@ -360,8 +754,39 @@
     return isActive && cell.bg ? `background:${cell.bg}` : ''
   }
 
+  // Highlight uses the same blue as row selection in the frame table
+  const HIGHLIGHT_BG = 'background:var(--nc-row-selected);color:#fff'
+
+  const _STRUCT = '.__struct'
+
+  function fieldMatches(fieldId: string, hovered: string | null): boolean {
+    if (!hovered || !fieldId) return false
+    if (fieldId === hovered) return true
+    // Hovering a parent/name → all child bytes light up (sub-items + .__struct)
+    if (fieldId.startsWith(hovered + '.')) return true
+    // Hovering structural bytes → also light up the immediate parent name/header bytes
+    if (hovered.endsWith(_STRUCT) && fieldId === hovered.slice(0, -_STRUCT.length)) return true
+    return false
+  }
+
+  function hexCellStyle(cell: HexCell, on: boolean, hexDiff: boolean, byteIdx: number, hovered: string | null): string {
+    const fieldId = _byteFieldMap[byteIdx] || ''
+    if (fieldMatches(fieldId, hovered)) return HIGHLIGHT_BG
+    if (hexDiff) return 'background:color-mix(in srgb,var(--nc-status-err) 28%,transparent)'
+    const base = cellStyle(cell, on)
+    return !on ? base + ';opacity:0.18' : base
+  }
+
+  function asciiCellStyle(cell: HexCell, on: boolean, hexDiff: boolean, byteIdx: number, hovered: string | null): string {
+    const fieldId = _byteFieldMap[byteIdx] || ''
+    if (fieldMatches(fieldId, hovered)) return HIGHLIGHT_BG
+    if (hexDiff) return 'background:color-mix(in srgb,var(--nc-status-err) 28%,transparent)'
+    const base = cellStyle(cell, on)
+    return !on ? base + ';opacity:0.18' : base
+  }
+
   // ── Panel resize drag (vertical — overall detail panel height) ────────────
-  let height:   number  = 280
+  let height:   number  = parseInt(localStorage.getItem('nc:detailHeight') ?? '280', 10)
   let dragging: boolean = false
   let startY:   number  = 0
   let startH:   number  = 0
@@ -377,18 +802,51 @@
     if (dragging) {
       height = Math.max(120, Math.min(window.innerHeight - 120, startH + (startY - e.clientY)))
     }
+    if (treeDragging) {
+      const dx = e.clientX - treeDragStartX
+      treeWidth = Math.max(80, Math.min(600, treeDragStartW + dx))
+    }
     if (decodedDragging) {
       const dx = e.clientX - decodedDragStartX
       decodedWidth = Math.max(120, Math.min(600, decodedDragStartW + dx))
     }
+    if (_colDragging) {
+      const dx = e.clientX - _colDragStartX
+      if (_colDragging === 'key')  decColKey  = Math.max(40, Math.min(200, _colDragStartW + dx))
+      if (_colDragging === 'type') decColType = Math.max(28, Math.min(100, _colDragStartW + dx))
+    }
   }
 
   function dragEnd() {
+    if (dragging) localStorage.setItem('nc:detailHeight', String(height))
     dragging = false
+    if (treeDragging) localStorage.setItem('nc:treeWidth', String(treeWidth))
+    treeDragging = false
     if (decodedDragging) {
       localStorage.setItem(_DECODED_WIDTH_KEY, String(decodedWidth))
     }
     decodedDragging = false
+    if (_colDragging) {
+      localStorage.setItem('nc:decColKey',  String(decColKey))
+      localStorage.setItem('nc:decColType', String(decColType))
+      _colDragging = null
+    }
+  }
+
+  // ── Protocol tree width drag (horizontal) ──────────────────────────────────
+  let treeWidth:      number  = (() => {
+    const saved = parseInt(localStorage.getItem('nc:treeWidth') ?? '', 10)
+    return isNaN(saved) ? 224 : Math.max(80, Math.min(600, saved))
+  })()
+  let treeDragging:   boolean = false
+  let treeDragStartX: number  = 0
+  let treeDragStartW: number  = 0
+
+  function treeDragStart(e: MouseEvent): void {
+    treeDragging   = true
+    treeDragStartX = e.clientX
+    treeDragStartW = treeWidth
+    e.preventDefault()
   }
 
   // ── Decoded panel width drag (horizontal) ──────────────────────────────────
@@ -407,9 +865,27 @@
     decodedDragStartW = decodedWidth
     e.preventDefault()
   }
+
+  // ── Decoded column widths (key | type | value) ─────────────────────────────
+  let decColKey  = Math.max(40,  Math.min(200, parseInt(localStorage.getItem('nc:decColKey')  ?? '72',  10)))
+  let decColType = Math.max(28,  Math.min(100, parseInt(localStorage.getItem('nc:decColType') ?? '44',  10)))
+  let _colDragging: 'key' | 'type' | null = null
+  let _colDragStartX = 0
+  let _colDragStartW = 0
+
+  function colDragStart(e: MouseEvent, col: 'key' | 'type'): void {
+    _colDragging  = col
+    _colDragStartX = e.clientX
+    _colDragStartW = col === 'key' ? decColKey : decColType
+    e.preventDefault()
+  }
 </script>
 
 <svelte:window on:mousemove={dragMove} on:mouseup={dragEnd} />
+
+{#if fieldCtxMenu}
+  <ContextMenu x={fieldCtxMenu.x} y={fieldCtxMenu.y} items={fieldCtxMenu.items} on:close={() => fieldCtxMenu = null} />
+{/if}
 
 {#if p}
 <div
@@ -473,13 +949,13 @@
         {/each}
       </div>
     {:else}
-      <span class="text-(--nc-fg-5) italic ml-2 text-[10px]">
+      <span class="text-(--nc-fg-4) italic ml-2 text-[10px]">
         raw bytes unavailable — backend capture required
       </span>
     {/if}
 
     <button
-      class="ml-auto text-(--nc-fg-5) hover:text-(--nc-fg-2) transition-colors px-1"
+      class="ml-auto text-(--nc-fg-4) hover:text-(--nc-fg-2) transition-colors px-1"
       on:click={() => { exitTrack(); selectedPacket.set(null) }}
     >✕</button>
   </div>
@@ -505,14 +981,14 @@
   <div class="flex flex-1 min-h-0">
 
     <!-- Protocol tree (left panel) -->
-    <div class="w-56 shrink-0 border-r border-(--nc-border) overflow-y-auto">
+    <div class="shrink-0 overflow-y-auto" style="width:{treeWidth}px">
       {#each tree as sec}
         <div>
           <button
             class="flex w-full items-center gap-1 px-2 py-0.5 hover:bg-(--nc-surface-2) transition-colors text-left"
             on:click={() => toggle(sec.id)}
           >
-            <span class="text-(--nc-fg-5) text-[10px] w-3 shrink-0">{open(sec.id) ? '▼' : '▶'}</span>
+            <span class="text-(--nc-fg-4) text-[10px] w-3 shrink-0">{open(sec.id) ? '▼' : '▶'}</span>
             <span class="{sec.color} font-semibold truncate text-[11px]">{sec.label}</span>
           </button>
           {#if open(sec.id)}
@@ -520,10 +996,17 @@
               {#each sec.fields as [label, value]}
                 {@const prevVal     = prevTreeMap.get(`${sec.id}:${label}`)}
                 {@const treeChanged = $trackMode && prevVal !== undefined && prevVal !== value}
+                {@const treeFieldId = `${sec.id}:${label}`}
+                {@const treeHighlit = hoveredFieldId === treeFieldId}
+                <!-- svelte-ignore a11y-no-static-element-interactions -->
                 <div class="flex gap-1 py-px leading-4"
-                  style={treeChanged ? 'background:color-mix(in srgb,var(--nc-status-err) 18%,transparent)' : ''}>
-                  <span class="text-(--nc-fg-3) shrink-0 w-18 truncate">{label}</span>
-                  <span class="text-(--nc-fg-1) break-all">{value}</span>
+                  style={treeHighlit ? HIGHLIGHT_BG
+                        : treeChanged ? 'background:color-mix(in srgb,var(--nc-status-err) 18%,transparent)' : ''}
+                  on:mouseenter={() => { hoveredFieldId = treeFieldId }}
+                  on:mouseleave={() => { if (hoveredFieldId === treeFieldId) hoveredFieldId = null }}
+>
+                  <span class="shrink-0 w-18 truncate" style={treeHighlit ? 'color:#fff' : 'color:var(--nc-fg-3)'}>{label}</span>
+                  <span class="break-all" style={treeHighlit ? 'color:#fff' : 'color:var(--nc-fg-1)'}>{value}</span>
                 </div>
               {/each}
             </div>
@@ -532,6 +1015,13 @@
       {/each}
     </div>
 
+    <!-- Drag handle between tree and decoded/hex panels -->
+    <button
+      class="w-1 shrink-0 cursor-col-resize hover:bg-blue-500/30 transition-colors bg-(--nc-border) border-none p-0"
+      on:mousedown={treeDragStart}
+      aria-label="Resize protocol tree panel"
+    ></button>
+
     <!-- Decoded panel — only shown when an interpreter matches -->
     {#if decoded}
       <div class="shrink-0 border-r border-(--nc-border) overflow-y-auto flex flex-col"
@@ -539,7 +1029,7 @@
         <!-- Header -->
         <div class="px-2 py-1 bg-(--nc-surface) border-b border-(--nc-border) shrink-0
                     flex items-center gap-1.5 min-w-0">
-          <span class="text-(--nc-fg-5) text-[10px] shrink-0">&#9670;</span>
+          <span class="text-(--nc-fg-4) text-[10px] shrink-0">&#9670;</span>
           <span class="text-(--nc-fg-2) text-[10px] font-semibold uppercase tracking-wider truncate">
             {decoded.interpreterName}
           </span>
@@ -558,19 +1048,65 @@
             {decoded.error}
           </div>
         {:else}
-          <div class="flex-1 overflow-y-auto">
+          <div class="flex-1 overflow-y-auto overflow-x-hidden flex flex-col">
+            <!-- Column headers -->
+            <div class="flex items-center shrink-0 border-b border-(--nc-border) bg-(--nc-surface) sticky top-0 z-10 select-none">
+              <span class="shrink-0 px-1.5 py-0.5 text-[9px] text-(--nc-fg-3) uppercase tracking-wider truncate"
+                style="width:{decColKey}px">Field</span>
+              <!-- svelte-ignore a11y-no-static-element-interactions -->
+              <div class="w-px self-stretch bg-(--nc-border) shrink-0 cursor-col-resize hover:bg-blue-400/60 transition-colors"
+                on:mousedown={(e) => colDragStart(e, 'key')}></div>
+              <span class="shrink-0 px-1.5 py-0.5 text-[9px] text-(--nc-fg-3) uppercase tracking-wider truncate"
+                style="width:{decColType}px">Type</span>
+              <!-- svelte-ignore a11y-no-static-element-interactions -->
+              <div class="w-px self-stretch bg-(--nc-border) shrink-0 cursor-col-resize hover:bg-blue-400/60 transition-colors"
+                on:mousedown={(e) => colDragStart(e, 'type')}></div>
+              <span class="px-1.5 py-0.5 text-[9px] text-(--nc-fg-3) uppercase tracking-wider">Value</span>
+            </div>
+            <!-- Rows -->
             {#each decoded.fields as f}
               {@const changed = diffChanged.has(f.key)}
               {@const isNew   = diffNew.has(f.key)}
-              <div class="flex items-baseline gap-1 px-2 py-0.5 border-b border-(--nc-border-1) last:border-0"
-                style={changed ? 'background:color-mix(in srgb,var(--nc-status-err) 18%,transparent)'
+              {@const decFieldId = `decoded:${f.key}`}
+              {@const decHighlit = hoveredFieldId === decFieldId || hoveredFieldId === decFieldId + '.__struct'}
+              <!-- svelte-ignore a11y-no-static-element-interactions -->
+              <div class="flex items-baseline border-b border-(--nc-border-1) last:border-0 group/field"
+                style={decHighlit ? HIGHLIGHT_BG
+                      : changed ? 'background:color-mix(in srgb,var(--nc-status-err) 18%,transparent)'
                       : isNew   ? 'background:color-mix(in srgb,var(--nc-status-ok)   14%,transparent)'
-                      : ''}>
-                <span class="text-(--nc-fg-3) text-[10px] shrink-0 w-18 truncate"
+                      : ''}
+                on:mouseenter={() => { hoveredFieldId = decFieldId }}
+                on:mouseleave={() => {
+                  if (hoveredFieldId === decFieldId || hoveredFieldId?.startsWith(decFieldId + '.'))
+                    hoveredFieldId = null
+                }}
+                on:contextmenu|stopPropagation={(e) => openFieldMenu(e, f.key, f.value)}>
+                <!-- Key -->
+                <span class="shrink-0 px-1.5 py-0.5 text-[10px] truncate"
+                  style="width:{decColKey}px; {decHighlit ? 'color:#fff' : 'color:var(--nc-fg-3)'}"
                   title={f.key}>{f.key}</span>
-                <FieldValue value={f.value} />
-                <span class="text-(--nc-fg-5) text-[9px] shrink-0 ml-auto font-mono"
-                  title="Field type">{f.type}</span>
+                <div class="w-px self-stretch shrink-0" style="background:var(--nc-border-2)"></div>
+                <!-- Type -->
+                <span class="shrink-0 px-1.5 py-0.5 text-[9px] font-mono truncate"
+                  style="width:{decColType}px; {decHighlit ? 'color:#fff' : 'color:var(--nc-fg-3)'}"
+                  title={f.type}>{f.type}</span>
+                <div class="w-px self-stretch shrink-0" style="background:var(--nc-border-2)"></div>
+                <!-- Value -->
+                <div class="min-w-0 flex-1 px-1.5 py-0.5">
+                  <FieldValue value={f.value} fieldPath={f.key}
+                    structMode={hoveredFieldId === decFieldId + '.__struct'}
+                    hoveredPath={hoveredFieldId?.startsWith('decoded:') ? hoveredFieldId.slice(8) : null}
+                    changedPaths={diffChanged}
+                    newPaths={diffNew}
+                    onhover={(subPath) => { hoveredFieldId = 'decoded:' + subPath }}
+                    onleave={(subPath) => {
+                      if (hoveredFieldId === 'decoded:' + subPath) {
+                        const dot = subPath.lastIndexOf('.')
+                        hoveredFieldId = dot >= 0 ? 'decoded:' + subPath.slice(0, dot) : decFieldId
+                      }
+                    }}
+                    oncontext={(e, subPath, subVal) => openFieldMenu(e, subPath, subVal)} />
+                </div>
               </div>
             {/each}
           </div>
@@ -599,11 +1135,15 @@
 
                 <!-- First 8 hex bytes -->
                 {#each row.cells.slice(0, 8) as cell, j}
+                  {@const byteIdx = row.off + j}
                   {@const on      = cell?.layer ? activeLayers[cell.layer] ?? true : true}
-                  {@const hexDiff = $trackMode && changedByteIndices.has(row.off + j)}
+                  {@const hexDiff = $trackMode && changedByteIndices.has(byteIdx)}
+                  <!-- svelte-ignore a11y-no-static-element-interactions -->
                   <td class="w-[1.35rem] text-center transition-opacity"
-                    style="{hexDiff ? 'background:color-mix(in srgb,var(--nc-status-err) 28%,transparent)' : cellStyle(cell, on)}{!on ? ';opacity:0.18' : ''}"
-                    title={cell?.tip ?? ''}>
+                    style={hexCellStyle(cell, on, hexDiff, byteIdx, hoveredFieldId)}
+                    title={cell?.tip ?? ''}
+                    on:mouseenter={() => { if (cell) handleHexHover(byteIdx) }}
+                    on:mouseleave={handleHexLeave}>
                     {#if cell}{cell.hex}{:else}<span class="invisible">00</span>{/if}
                   </td>
                 {/each}
@@ -613,25 +1153,31 @@
 
                 <!-- Second 8 hex bytes -->
                 {#each row.cells.slice(8, 16) as cell, j}
+                  {@const byteIdx = row.off + 8 + j}
                   {@const on      = cell?.layer ? activeLayers[cell.layer] ?? true : true}
-                  {@const hexDiff = $trackMode && changedByteIndices.has(row.off + 8 + j)}
+                  {@const hexDiff = $trackMode && changedByteIndices.has(byteIdx)}
+                  <!-- svelte-ignore a11y-no-static-element-interactions -->
                   <td class="w-[1.35rem] text-center transition-opacity"
-                    style="{hexDiff ? 'background:color-mix(in srgb,var(--nc-status-err) 28%,transparent)' : cellStyle(cell, on)}{!on ? ';opacity:0.18' : ''}"
-                    title={cell?.tip ?? ''}>
+                    style={hexCellStyle(cell, on, hexDiff, byteIdx, hoveredFieldId)}
+                    title={cell?.tip ?? ''}
+                    on:mouseenter={() => { if (cell) handleHexHover(byteIdx) }}
+                    on:mouseleave={handleHexLeave}>
                     {#if cell}{cell.hex}{:else}<span class="invisible">00</span>{/if}
                   </td>
                 {/each}
 
                 <!-- ASCII column -->
-                <td class="pl-4 text-(--nc-fg-4) select-none whitespace-pre tracking-wide">
+                <!-- svelte-ignore a11y-no-static-element-interactions -->
+                <td class="pl-4 select-none whitespace-pre tracking-wide" style="color:var(--nc-fg-1)">
                   {#each row.cells as cell, j}
                     {#if cell}
+                      {@const byteIdx = row.off + j}
                       {@const on      = cell.layer ? activeLayers[cell.layer] ?? true : true}
-                      {@const hexDiff = $trackMode && changedByteIndices.has(row.off + j)}
-                      <span
-                        style="{hexDiff ? 'background:color-mix(in srgb,var(--nc-status-err) 28%,transparent)' : cellStyle(cell, on)}{!on ? ';opacity:0.18' : ''}"
-                        title={cell.tip}
-                      >{cell.ascii}</span>
+                      {@const hexDiff = $trackMode && changedByteIndices.has(byteIdx)}
+                      {@const aStyle  = asciiCellStyle(cell, on, hexDiff, byteIdx, hoveredFieldId)}
+                      <span style={aStyle} title={cell.tip}
+                        on:mouseenter={() => handleHexHover(byteIdx)}
+                        on:mouseleave={handleHexLeave}>{cell.ascii}</span>
                     {:else}
                       <span class="invisible">.</span>
                     {/if}
@@ -642,7 +1188,7 @@
           </tbody>
         </table>
       {:else}
-        <div class="flex items-center justify-center h-full text-(--nc-fg-5) italic select-none">
+        <div class="flex items-center justify-center h-full text-(--nc-fg-4) italic select-none">
           No raw bytes — start a backend capture to inspect packet data.
         </div>
       {/if}

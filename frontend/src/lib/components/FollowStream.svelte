@@ -30,7 +30,9 @@
   function extractPayload(pkt: Packet): Uint8Array | null {
     if (!pkt.raw_hex) return null
     try {
-      const raw = new Uint8Array(pkt.raw_hex.match(/.{2}/g)!.map(b => parseInt(b, 16)))
+      const hexPairs = pkt.raw_hex.match(/.{2}/g)
+      if (!hexPairs) return null
+      const raw = new Uint8Array(hexPairs.map(b => parseInt(b, 16)))
       let offset = 0
       const firstNibble = raw[0] >> 4
       const hasEthernet = firstNibble !== 4 && firstNibble !== 6

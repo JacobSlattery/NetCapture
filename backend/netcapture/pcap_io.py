@@ -98,16 +98,13 @@ def read_pcap(data: bytes) -> tuple[int, Iterator[dict]]:
         raise ValueError(f"Bad pcap magic: 0x{magic:08x}")
 
     swap = magic == 0xd4c3b2a1  # big-endian pcap
+    _pkt_hdr = struct.Struct(">IIII") if swap else _PKT_HDR
 
     def _iter() -> Iterator[dict]:
         offset = _GLOBAL_HDR.size
-        while offset + _PKT_HDR.size <= len(data):
-            ts_sec, ts_usec, incl_len, orig_len = _PKT_HDR.unpack_from(data, offset)
-            if swap:
-                ts_sec  = int.from_bytes(ts_sec.to_bytes(4, "little"),  "big")
-                ts_usec = int.from_bytes(ts_usec.to_bytes(4, "little"), "big")
-                incl_len = int.from_bytes(incl_len.to_bytes(4, "little"), "big")
-            offset += _PKT_HDR.size
+        while offset + _pkt_hdr.size <= len(data):
+            ts_sec, ts_usec, incl_len, orig_len = _pkt_hdr.unpack_from(data, offset)
+            offset += _pkt_hdr.size
             raw = data[offset: offset + incl_len]
             offset += incl_len
             yield {

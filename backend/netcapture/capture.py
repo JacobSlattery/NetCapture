@@ -95,6 +95,8 @@ def compute_warnings(raw: bytes) -> list[str]:
     if (version_ihl >> 4) != 4:
         return warnings  # not IPv4
     ihl       = (version_ihl & 0x0F) * 4
+    if ihl < 20:
+        return warnings  # IHL too small
     proto_num = raw[9]
     src_bytes = raw[12:16]
     dst_bytes = raw[16:20]
@@ -195,6 +197,8 @@ def parse_packet(raw: bytes, start_time: float, seq: int) -> dict | None:
     if (version_ihl >> 4) != 4:
         return None  # skip non-IPv4
     ihl          = (version_ihl & 0x0F) * 4
+    if ihl < 20:
+        return None  # IHL too small for a valid IPv4 header
     total_len    = struct.unpack_from("!H", raw, 2)[0]
     ttl          = raw[8]
     proto_num    = raw[9]
@@ -213,6 +217,8 @@ def parse_packet(raw: bytes, start_time: float, seq: int) -> dict | None:
     if proto_num == 6 and len(payload) >= 20:          # TCP
         src_port, dst_port = struct.unpack_from("!HH", payload)
         data_off = (payload[12] >> 4) * 4
+        if data_off < 20:
+            data_off = 20  # clamp to minimum TCP header size
         flags    = _tcp_flags(payload[13])
         seq_num  = struct.unpack_from("!I", payload, 4)[0]
         app_payload  = payload[data_off:]

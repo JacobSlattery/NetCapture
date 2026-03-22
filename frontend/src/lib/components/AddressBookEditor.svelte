@@ -50,6 +50,8 @@
   }
 
   async function save() {
+    // Filter out entries with empty address or name to prevent blank matches
+    entries = entries.filter(e => e.address.trim() && e.name.trim())
     saving = true
     await saveAddressBook(entries)
     addressBook.set(entries)

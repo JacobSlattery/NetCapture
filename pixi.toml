@@ -32,8 +32,8 @@ npcap = { features = ["npcap"] }
 
 # Frontend
 install-ui = { cmd = "npm install",   cwd = "frontend", description = "Install npm packages" }
-dev-ui     = { cmd = "npm run dev",   cwd = "frontend", description = "Vite dev server  →  http://localhost:5173" }
-build-ui   = { cmd = "npm run build", cwd = "frontend", description = "Production build  →  backend/static/" }
+dev-ui     = { cmd = "npm run dev",   cwd = "frontend", depends-on = ["install-ui"], description = "Vite dev server  →  http://localhost:5173" }
+build-ui   = { cmd = "npm run build", cwd = "frontend", depends-on = ["install-ui"], description = "Production build  →  backend/static/" }
 
 # Backend
 dev-api    = { cmd = "python backend/server.py", description = "FastAPI + uvicorn  →  http://localhost:8000" }

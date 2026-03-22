@@ -10,16 +10,18 @@
  * In standalone mode leave both empty — they are auto-detected from location.
  */
 
+import { get } from 'svelte/store'
 import {
   packets, stats, chartHistory,
   isCapturing, captureMode, connectionStatus, selectedPacket,
   trackMode, trackFingerprint, trackPrev, addressBook, trackLastUpdate, trackStrictness,
   captureFilter,
   maxPackets, capturePacketLimit, ringBuffer, dnsCache, npcapAvailable, profiles,
+  watchEntries, watchValues,
 } from './stores'
-import type { Packet, ChartPoint, NetworkInterface, CaptureProfile, WsMessage, TrackFingerprint, AddressBookEntry } from './types'
+import type { Packet, ChartPoint, NetworkInterface, CaptureProfile, WsMessage, TrackFingerprint, AddressBookEntry, WatchEntry, WatchMatcher, WatchValue } from './types'
 import type { ColumnVisibility } from './stores'
-import { setAddressBook, parseFilter, matchesFilter } from './filter'
+import { setAddressBook, parseFilter, matchesFilter, resolveDecodedPath } from './filter'
 import type { ParseResult } from './filter'
 
 // Keep filter's address book mirror in sync with the store
@@ -94,6 +96,12 @@ const TRACK_WAITING_THRESHOLD = 5_000  // ms before considered "no signal"
 trackLastUpdate.subscribe(v => { _trackLastUpdateMs = v })
 trackStrictness.subscribe(v => { _trackStrictness = v })
 captureFilter.subscribe(v => { _filterResult = parseFilter(v) })
+
+// ── Watchlist mirrors ────────────────────────────────────────────────────────
+let _watchEntries: WatchEntry[] = []
+let _watchValues:  Record<string, WatchValue> = {}
+watchEntries.subscribe(v => { _watchEntries = v })
+watchValues.subscribe(v => { _watchValues = v })
 ;{
   let first = true
   selectedPacket.subscribe((p: Packet | null) => {
@@ -137,13 +145,91 @@ function applyTracking(batch: Packet[]): void {
   const now = Date.now()
   trackLastUpdate.set(now)
 
-  let cur: Packet | null = null
-  const unsub = selectedPacket.subscribe((p: Packet | null) => { cur = p })
-  unsub()
-  if (cur === null || (cur as Packet).id !== match.id) {
+  const cur = get(selectedPacket)
+  if (cur === null || cur.id !== match.id) {
     trackPrev.set(cur)
     selectedPacket.set(match)
   }
+}
+
+// ── Watchlist evaluation ─────────────────────────────────────────────────────
+
+function matchesWatchMatcher(pkt: Packet, m: WatchMatcher): boolean {
+  if (m.protocol        && pkt.protocol !== m.protocol)                       return false
+  if (m.src_ip          && pkt.src_ip   !== m.src_ip)                         return false
+  if (m.dst_ip          && pkt.dst_ip   !== m.dst_ip)                         return false
+  if (m.src_port != null && pkt.src_port !== m.src_port)                      return false
+  if (m.dst_port != null && pkt.dst_port !== m.dst_port)                      return false
+  if (m.interpreterName && pkt.decoded?.interpreterName !== m.interpreterName) return false
+  return true
+}
+
+function extractWatchField(pkt: Packet, fieldPath: string): string | null {
+  if (!pkt.decoded) return null
+  const parts = fieldPath.split('.')
+  const [fieldKey, ...nestedPath] = parts
+  const field = pkt.decoded.fields.find(f => f.key.toLowerCase() === fieldKey.toLowerCase())
+  if (!field) return null
+  const values = resolveDecodedPath(field.value, nestedPath)
+  return values.length > 0 ? values[0] : null
+}
+
+function applyWatchlist(batch: Packet[]): void {
+  if (!_watchEntries.length) return
+
+  // Only consider packets that pass the current display filter (like track mode)
+  const filtered = _filterResult.valid === false ? batch : batch.filter(p => matchesFilter(p, _filterResult))
+  if (!filtered.length) return
+
+  let updated = false
+  const newValues = { ..._watchValues }
+
+  for (const entry of _watchEntries) {
+    // Find newest matching packet in filtered batch (reverse for most recent first)
+    const match = [...filtered].reverse().find(p => matchesWatchMatcher(p, entry.matcher))
+    if (!match) continue
+
+    const extracted = extractWatchField(match, entry.fieldPath)
+    if (extracted === null) continue
+
+    const prev = newValues[entry.id]
+    const prevCurrent = prev?.current ?? null
+
+    if (extracted !== prevCurrent) {
+      newValues[entry.id] = {
+        entryId:        entry.id,
+        current:        extracted,
+        previous:       prevCurrent,
+        changed:        prevCurrent !== null,  // not "changed" on first acquisition
+        lastUpdate:     Date.now(),
+        sourcePacketId: match.id,
+        prevPacketId:   prev?.sourcePacketId ?? null,
+      }
+      updated = true
+    }
+  }
+
+  if (updated) {
+    _watchValues = newValues
+    watchValues.set(newValues)
+  }
+}
+
+/** Immediately populate a watch entry's value from a specific packet (no change flag). */
+export function seedWatchEntry(entry: WatchEntry, pkt: Packet): void {
+  const extracted = extractWatchField(pkt, entry.fieldPath)
+  if (extracted === null) return
+  const newValues = { ..._watchValues, [entry.id]: {
+    entryId:        entry.id,
+    current:        extracted,
+    previous:       null,
+    changed:        false,
+    lastUpdate:     Date.now(),
+    sourcePacketId: pkt.id,
+    prevPacketId:   null,
+  }}
+  _watchValues = newValues
+  watchValues.set(newValues)
 }
 
 // ── Stats helper ──────────────────────────────────────────────────────────────
@@ -182,9 +268,7 @@ function reacquireScan(): void {
   // Still receiving recent matches — nothing to do.
   if (_trackLastUpdateMs !== null && now - _trackLastUpdateMs < TRACK_WAITING_THRESHOLD) return
 
-  let stored: Packet[] = []
-  const unsub = packets.subscribe(p => { stored = p })
-  unsub()
+  const stored = get(packets)
   if (!stored.length) return
 
   // Search the most recent 200 packets, newest first.
@@ -196,10 +280,8 @@ function reacquireScan(): void {
   trackLastUpdate.set(now)
   _trackLastUpdateMs = now
 
-  let cur: Packet | null = null
-  const unsub2 = selectedPacket.subscribe((p: Packet | null) => { cur = p })
-  unsub2()
-  if (cur === null || (cur as Packet).id !== match.id) {
+  const cur = get(selectedPacket)
+  if (cur === null || cur.id !== match.id) {
     trackPrev.set(cur)
     selectedPacket.set(match)
   }
@@ -234,6 +316,7 @@ function startDisplayTick(): void {
       return result
     })
     applyTracking(batch)
+    applyWatchlist(batch)
     // Trigger DNS resolution for new IPs
     const ips = batch.map(p => [p.src_ip, p.dst_ip]).flat().filter(Boolean) as string[]
     if (ips.length) resolveIps([...new Set(ips)])
@@ -306,6 +389,7 @@ function connect(): void {
             }
 
             applyTracking(snap)
+            applyWatchlist(snap)
           }
           break
         }
@@ -388,6 +472,7 @@ export function clearCapture(): void {
   localStorage.removeItem('nc:trackMode')
   localStorage.removeItem('nc:trackFingerprint')
   localStorage.removeItem('nc:selectedPacketId')
+  watchValues.set({})
   packets.set([])
   _displayBuf   = []
   _lastPacketId = 0
@@ -400,9 +485,7 @@ export function clearCapture(): void {
 }
 
 export function exportCapture(): void {
-  let snap: Packet[] = []
-  const unsub = packets.subscribe(p => { snap = p })
-  unsub()
+  const snap = get(packets)
   if (!snap.length) return
 
   const ts   = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')
@@ -422,7 +505,10 @@ export async function importCapture(file: File): Promise<void> {
   const data = JSON.parse(text)
   if (!Array.isArray(data)) throw new Error('Expected a JSON array of packets')
 
-  const imported = data as Packet[]
+  const imported = (data as Packet[]).filter(
+    p => p && typeof p === 'object' && typeof p.protocol === 'string' && typeof p.id === 'number'
+  )
+  if (!imported.length) throw new Error('No valid packets found in file')
 
   const protocol_counts: Record<string, number> = {}
   let total_bytes = 0
@@ -470,9 +556,7 @@ function _processDnsQueue(): void {
 }
 
 export function resolveIps(ips: string[]): void {
-  let cache: Record<string, string | null> = {}
-  const unsub = dnsCache.subscribe(v => { cache = v })
-  unsub()
+  const cache = get(dnsCache)
   for (const ip of ips) {
     if (ip in cache || _dnsInflight.has(ip)) continue
     _dnsInflight.add(ip)
@@ -504,6 +588,7 @@ export async function importPcap(file: File): Promise<void> {
   const form = new FormData()
   form.append('file', file)
   const res = await fetch(`${_apiBase}/api/capture/import/pcap`, { method: 'POST', body: form })
+  if (!res.ok) throw new Error(`Server error: ${res.status}`)
   const body = await res.json() as { status: string; count?: number; message?: string }
   if (body.status !== 'ok') throw new Error(body.message ?? 'Import failed')
   // The backend broadcasts a 'batch' message to all WS subscribers, so the
@@ -521,6 +606,7 @@ export async function importCsv(file: File): Promise<void> {
   const form = new FormData()
   form.append('file', file)
   const res = await fetch(`${_apiBase}/api/capture/import/csv`, { method: 'POST', body: form })
+  if (!res.ok) throw new Error(`Server error: ${res.status}`)
   const body = await res.json() as { status: string; count?: number; message?: string }
   if (body.status !== 'ok') throw new Error(body.message ?? 'CSV import failed')
   _displayBuf   = []
@@ -664,6 +750,31 @@ export async function deleteProfile(id: string): Promise<boolean> {
     return false
   }
 }
+
+// ── Watchlist API ──────────────────────────────────────────────────────────────
+
+export async function fetchWatchlists(): Promise<WatchEntry[]> {
+  try {
+    const res = await fetch(`${_apiBase}/api/watchlists`)
+    if (!res.ok) return []
+    const data = await res.json() as { watchlists?: WatchEntry[] }
+    return data.watchlists ?? []
+  } catch {
+    return []
+  }
+}
+
+export async function syncWatchlists(entries: WatchEntry[]): Promise<void> {
+  try {
+    await fetch(`${_apiBase}/api/watchlists`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries }),
+    })
+  } catch { /* silent */ }
+}
+
+// ── Address book API ──────────────────────────────────────────────────────────
 
 export async function fetchAddressBook(): Promise<AddressBookEntry[]> {
   try {

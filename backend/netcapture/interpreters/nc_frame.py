@@ -90,66 +90,82 @@ class NcFrameInterpreter:
         count  = payload[3]
         fields: list[DecodedField] = []
         off    = 4
+        end    = len(payload)
 
         try:
             for _ in range(count):
                 # ── Key ───────────────────────────────────────────────────────
+                if off >= end:
+                    return DecodedFrame(self.name, fields=fields, error="Truncated: expected key length byte")
                 key_len = payload[off];  off += 1
+                if off + key_len > end:
+                    return DecodedFrame(self.name, fields=fields, error=f"Truncated: key needs {key_len} bytes, only {end - off} remain")
                 key     = payload[off : off + key_len].decode();  off += key_len
 
                 # ── Tag ───────────────────────────────────────────────────────
+                if off >= end:
+                    return DecodedFrame(self.name, fields=fields, error="Truncated: expected type tag byte")
                 tag       = payload[off];  off += 1
                 type_name = _TAG_NAMES.get(tag, f"0x{tag:02x}")
 
                 # ── Value ─────────────────────────────────────────────────────
+                def _need(n: int) -> None:
+                    if off + n > end:
+                        raise ValueError(f"Truncated: value needs {n} bytes, only {end - off} remain")
+
                 if tag == 0x01:    # u8
-                    value: str | int | float | bool = payload[off];  off += 1
+                    _need(1);  value: str | int | float | bool = payload[off];  off += 1
 
                 elif tag == 0x02:  # u16
-                    value = struct.unpack_from("!H", payload, off)[0];  off += 2
+                    _need(2);  value = struct.unpack_from("!H", payload, off)[0];  off += 2
 
                 elif tag == 0x03:  # u32
-                    value = struct.unpack_from("!I", payload, off)[0];  off += 4
+                    _need(4);  value = struct.unpack_from("!I", payload, off)[0];  off += 4
 
                 elif tag == 0x04:  # f32
-                    value = round(struct.unpack_from("!f", payload, off)[0], 6);  off += 4
+                    _need(4);  value = round(struct.unpack_from("!f", payload, off)[0], 6);  off += 4
 
                 elif tag == 0x05:  # str  (1-byte length prefix, max 255 bytes)
-                    slen  = payload[off];  off += 1
-                    value = payload[off : off + slen].decode();  off += slen
+                    _need(1);  slen  = payload[off];  off += 1
+                    _need(slen);  value = payload[off : off + slen].decode();  off += slen
 
                 elif tag == 0x06:  # bool
-                    value = payload[off] != 0;  off += 1
+                    _need(1);  value = payload[off] != 0;  off += 1
 
                 elif tag == 0x07:  # json  (2-byte length prefix)
-                    jlen  = struct.unpack_from("!H", payload, off)[0];  off += 2
-                    value = json.loads(payload[off : off + jlen].decode());  off += jlen
+                    _need(2);  jlen  = struct.unpack_from("!H", payload, off)[0];  off += 2
+                    _need(jlen);  value = json.loads(payload[off : off + jlen].decode());  off += jlen
+                    # Refine generic "json" label based on actual decoded type
+                    if isinstance(value, list):
+                        type_name = "list"
+                    elif isinstance(value, dict):
+                        type_name = "object"
 
                 elif tag == 0x08:  # i8
-                    value = struct.unpack_from("!b", payload, off)[0];  off += 1
+                    _need(1);  value = struct.unpack_from("!b", payload, off)[0];  off += 1
 
                 elif tag == 0x09:  # i16
-                    value = struct.unpack_from("!h", payload, off)[0];  off += 2
+                    _need(2);  value = struct.unpack_from("!h", payload, off)[0];  off += 2
 
                 elif tag == 0x0A:  # i32
-                    value = struct.unpack_from("!i", payload, off)[0];  off += 4
+                    _need(4);  value = struct.unpack_from("!i", payload, off)[0];  off += 4
 
                 elif tag == 0x0B:  # i64
-                    value = struct.unpack_from("!q", payload, off)[0];  off += 8
+                    _need(8);  value = struct.unpack_from("!q", payload, off)[0];  off += 8
 
                 elif tag == 0x0C:  # u64
-                    value = struct.unpack_from("!Q", payload, off)[0];  off += 8
+                    _need(8);  value = struct.unpack_from("!Q", payload, off)[0];  off += 8
 
                 elif tag == 0x0D:  # f64
-                    value = round(struct.unpack_from("!d", payload, off)[0], 10);  off += 8
+                    _need(8);  value = round(struct.unpack_from("!d", payload, off)[0], 10);  off += 8
 
                 elif tag == 0x0E:  # hex  (2-byte length prefix + raw bytes → hex string)
-                    blen  = struct.unpack_from("!H", payload, off)[0];  off += 2
-                    value = payload[off : off + blen].hex();  off += blen
+                    _need(2);  blen  = struct.unpack_from("!H", payload, off)[0];  off += 2
+                    _need(blen);  value = payload[off : off + blen].hex();  off += blen
 
                 elif tag == 0x0F:  # strlong  (2-byte length prefix, max 65 535 bytes)
-                    slen  = struct.unpack_from("!H", payload, off)[0];  off += 2
-                    value = payload[off : off + slen].decode();  off += slen
+                    _need(2);  slen  = struct.unpack_from("!H", payload, off)[0];  off += 2
+                    _need(slen);  value = payload[off : off + slen].decode();  off += slen
 
                 else:
                     return DecodedFrame(

@@ -30,6 +30,38 @@ export interface TrackFingerprint {
   interpreterName: string | undefined
 }
 
+// ── Watchlist ────────────────────────────────────────────────────────────────
+
+/** Which packets a watch entry applies to (all fields optional for flexible matching) */
+export interface WatchMatcher {
+  protocol?:        string
+  src_ip?:          string
+  dst_ip?:          string
+  src_port?:        number | null
+  dst_port?:        number | null
+  interpreterName?: string
+}
+
+/** A single watched decoded field */
+export interface WatchEntry {
+  id:        string          // crypto.randomUUID()
+  label:     string          // user-facing display name
+  matcher:   WatchMatcher    // packet source filter
+  fieldPath: string          // dot-separated decoded field path (e.g. "status.code")
+  group?:    string          // grouping label (defaults to interpreterName)
+}
+
+/** Runtime state per watch entry (NOT persisted) */
+export interface WatchValue {
+  entryId:        string
+  current:        string | null   // stringified extracted value
+  previous:       string | null   // previous value for change detection
+  changed:        boolean         // true when current !== previous (false on first acquisition)
+  lastUpdate:     number | null   // ms timestamp of last value change
+  sourcePacketId: number | null   // ID of the packet that supplied the current value
+  prevPacketId:   number | null   // ID of the packet that supplied the previous value
+}
+
 // ── Address book ──────────────────────────────────────────────────────────────
 
 export interface AddressBookEntry {
