@@ -297,11 +297,15 @@ NetCapture is a Python package (backend) and a Svelte component library (fronten
 ### Architecture overview
 
 ```
-Your FastAPI app
+Your FastAPI app  (e.g. port 8080)
 +-- app.include_router(create_router(), prefix="/netcapture")
         |-- /netcapture/api/...        REST endpoints
         |-- /netcapture/ws/capture     live packet stream (display WebSocket)
-        +-- /netcapture/ws/inject      packet injection (external programs)
+        +-- /netcapture/ws/inject      packet injection (shared port)
+
+Optional — dedicated inject server  (e.g. port 9000)
++-- asyncio.create_task(start_inject_server(port=9000))
+        +-- ws://host:9000/ws/inject   packet injection (own port)
 
 Your Svelte / SvelteKit app
 +-- <NetCapture wsUrl="wss://host/netcapture/ws/capture" apiBase="/netcapture" />
@@ -370,6 +374,61 @@ The server responds to each message with `{"ok": true, "injected": N}`, `{"ok": 
 | `abs_time`, `timestamp` | optional | Auto-generated from wall clock if omitted |
 
 This enables use cases like piping output from `tshark`, forwarding packets from a remote capture host, replaying a pcap at original timing, or any process that needs to push traffic into the viewer without going through the network stack.
+
+#### Direct In-Process Injection
+
+If the code sending packets to NetCapture runs **in the same Python process**, skip the WebSocket entirely and call `inject_packet()` directly. The packet goes straight into the capture manager with no serialization, no network round-trip, and no open socket:
+
+```python
+import netcapture
+
+# Returns True if accepted, False if capture is not currently running.
+netcapture.inject_packet({
+    "protocol":    "UDP",
+    "length":      48,
+    "src_ip":      "192.168.1.50",
+    "dst_ip":      "192.168.1.1",
+    "src_port":    9001,
+    "dst_port":    9001,
+    "info":        "sensor reading",
+    "payload_hex": "4e430108...",
+})
+```
+
+The dict accepts the same fields as the WebSocket endpoint (see the field table above). Missing fields are filled with defaults. The dict is modified in-place.
+
+#### Injection on a Dedicated Port
+
+By default the injection endpoint lives at `/ws/inject` on the same port as your main application. If you need injectors to connect to a fixed port that is independent of the host application, use `start_inject_server()` from your app's [lifespan](https://fastapi.tiangolo.com/advanced/events/):
+
+```python
+import asyncio
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+import netcapture
+
+@asynccontextmanager
+async def lifespan(app):
+    task = asyncio.create_task(
+        netcapture.start_inject_server(host="0.0.0.0", port=9000)
+    )
+    yield
+    task.cancel()
+
+app = FastAPI(lifespan=lifespan)
+app.include_router(netcapture.create_router(), prefix="/netcapture")
+```
+
+`start_inject_server` spins up a minimal WebSocket-only server (no REST endpoints) on the given port. Both endpoints accept the same packet JSON format and feed into the same live stream — you can use either or both simultaneously.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `host` | `"0.0.0.0"` | Interface to bind (use `"127.0.0.1"` to restrict to localhost) |
+| `port` | `8765` | TCP port to listen on |
+
+> The dedicated server runs inside the same asyncio event loop as the host application. Signal handling is intentionally left to the outer process so `SIGTERM`/`SIGINT` shut everything down cleanly together.
+
+> **Port conflicts / permission errors** — if the port is already in use or the process lacks permission (ports below 1024 typically require root), `start_inject_server` logs a warning and returns cleanly. The main application and the `/ws/inject` endpoint on the main router continue to work normally; only the dedicated port is unavailable.
 
 #### Custom Profiles
 
@@ -566,6 +625,8 @@ Then run `pixi run mock-device --format nc-frame` and start capturing on the loo
 | Symbol | What it is |
 |--------|-----------|
 | `create_router(profiles, extra_interpreters, address_book, profiles_path)` | FastAPI router factory |
+| `start_inject_server(host, port)` | Async coroutine — runs a standalone WS inject server on a dedicated port |
+| `inject_packet(pkt)` | Direct in-process injection — zero overhead, no WebSocket required |
 | `register_interpreter(interp, prepend=False)` | Add an interpreter to the global registry |
 | `Interpreter` | `Protocol` class — use for type hints when building interpreters |
 | `DecodedFrame` | Return type of `decode()` — holds interpreter name + field list |

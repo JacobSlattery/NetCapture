@@ -60,6 +60,31 @@ Registering interpreters independently (before create_router is called)
     register_interpreter(MyInterpreter())            # appended (runs after built-ins)
     register_interpreter(MyInterpreter(), prepend=True)  # prepended (runs before built-ins)
 
+Running the injection endpoint on a dedicated port
+──────────────────────────────────────────────────
+If your host application is already running on a fixed port and injectors
+need a predictable, separate connection target, use start_inject_server()
+from the app's lifespan:
+
+    import asyncio
+    from contextlib import asynccontextmanager
+    import netcapture
+
+    @asynccontextmanager
+    async def lifespan(app):
+        task = asyncio.create_task(
+            netcapture.start_inject_server(host="0.0.0.0", port=9000)
+        )
+        yield
+        task.cancel()
+
+    app = FastAPI(lifespan=lifespan)
+    app.include_router(netcapture.create_router(), prefix="/netcapture")
+
+Injectors then connect to ws://yourhost:9000/ws/inject regardless of which
+port the main application runs on.  The /ws/inject endpoint on the main app
+remains available as well.
+
 The frontend component must be configured with matching URLs:
 
     <NetCapture
@@ -68,7 +93,7 @@ The frontend component must be configured with matching URLs:
     />
 """
 
-from ._router import create_router
+from ._router import create_router, start_inject_server, inject_packet
 from ._manager import CaptureManager
 from .interpreters import register as register_interpreter, Interpreter, DecodedFrame, DecodedField
 from .profiles import DEFAULT_PROFILES
@@ -76,6 +101,8 @@ from .watchlists import DEFAULT_WATCHLISTS
 
 __all__ = [
     "create_router",
+    "start_inject_server",
+    "inject_packet",
     "CaptureManager",
     "register_interpreter",
     "Interpreter",

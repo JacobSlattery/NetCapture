@@ -60,16 +60,22 @@ def _ip_checksum_ok(raw: bytes, ihl: int) -> bool:
     return _ones_complement_sum(raw[:ihl]) == 0xFFFF
 
 
-def _tcp_checksum_ok(raw: bytes, ihl: int, src_bytes: bytes, dst_bytes: bytes) -> bool:
-    """Return True when the TCP segment checksum is valid."""
-    tcp_seg = raw[ihl:]
-    pseudo  = src_bytes + dst_bytes + bytes([0, 6]) + struct.pack("!H", len(tcp_seg))
+def _tcp_checksum_ok(tcp_seg: bytes, src_bytes: bytes, dst_bytes: bytes) -> bool:
+    """Return True when the TCP segment checksum is valid.
+
+    ``tcp_seg`` must be exactly the TCP segment (header + data) with no
+    trailing padding — callers should clip to the IP total-length field first.
+    """
+    pseudo = src_bytes + dst_bytes + bytes([0, 6]) + struct.pack("!H", len(tcp_seg))
     return _ones_complement_sum(pseudo + tcp_seg) == 0xFFFF
 
 
-def _udp_checksum_ok(raw: bytes, ihl: int, src_bytes: bytes, dst_bytes: bytes) -> bool:
-    """Return True when the UDP checksum is valid.  Zero means not computed (optional)."""
-    udp_seg = raw[ihl:]
+def _udp_checksum_ok(udp_seg: bytes, src_bytes: bytes, dst_bytes: bytes) -> bool:
+    """Return True when the UDP checksum is valid.  Zero means not computed (optional).
+
+    ``udp_seg`` must be exactly the UDP segment (header + data) with no
+    trailing padding — callers should clip to the IP total-length field first.
+    """
     if struct.unpack_from("!H", udp_seg, 6)[0] == 0:
         return True  # checksum field is optional; 0 = sender chose not to compute
     udp_len = struct.unpack_from("!H", udp_seg, 4)[0]
@@ -94,20 +100,34 @@ def compute_warnings(raw: bytes) -> list[str]:
     version_ihl = raw[0]
     if (version_ihl >> 4) != 4:
         return warnings  # not IPv4
-    ihl       = (version_ihl & 0x0F) * 4
+    ihl = (version_ihl & 0x0F) * 4
     if ihl < 20:
         return warnings  # IHL too small
-    proto_num = raw[9]
-    src_bytes = raw[12:16]
-    dst_bytes = raw[16:20]
-    payload   = raw[ihl:]
+
+    proto_num  = raw[9]
+    src_bytes  = raw[12:16]
+    dst_bytes  = raw[16:20]
+
+    # Clip to the IP-declared total length so that any link-layer padding
+    # (e.g. Ethernet minimum-frame zero-fill) is excluded from checksum math.
+    ip_total = min(struct.unpack_from("!H", raw, 2)[0], len(raw))
+
     if not _ip_checksum_ok(raw, ihl):
         warnings.append("Bad IP checksum")
-    if proto_num == 6 and len(payload) >= 20:
-        if not _tcp_checksum_ok(raw, ihl, src_bytes, dst_bytes):
+
+    # Fragmented packets cannot have their transport checksum validated here —
+    # it covers the fully reassembled segment.  Skip if MF bit is set or the
+    # fragment offset is non-zero (bits 13-0 of the flags/fragment field).
+    flags_frag = struct.unpack_from("!H", raw, 6)[0]
+    if flags_frag & 0x3FFF:
+        return warnings  # fragment — transport checksum not verifiable
+
+    transport_seg = raw[ihl:ip_total]
+    if proto_num == 6 and len(transport_seg) >= 20:
+        if not _tcp_checksum_ok(transport_seg, src_bytes, dst_bytes):
             warnings.append("Bad TCP checksum")
-    elif proto_num == 17 and len(payload) >= 8:
-        if not _udp_checksum_ok(raw, ihl, src_bytes, dst_bytes):
+    elif proto_num == 17 and len(transport_seg) >= 8:
+        if not _udp_checksum_ok(transport_seg, src_bytes, dst_bytes):
             warnings.append("Bad UDP checksum")
     return warnings
 

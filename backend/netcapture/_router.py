@@ -106,6 +106,188 @@ def _parse_pcap_bytes(data: bytes) -> list[dict]:
     return results
 
 
+def _normalize_inject_packet(pkt: dict) -> None:
+    """Fill in default fields and decode ``payload_hex`` → ``_payload`` in-place."""
+    now     = _datetime.now()
+    rel     = _time.time() - _get_session_start()
+    ts_str  = f"{int(rel // 60):02d}:{rel % 60:06.3f}"
+    abs_str = now.strftime("%H:%M:%S.") + f"{now.microsecond // 1000:03d}"
+
+    pkt.setdefault("abs_time",  abs_str)
+    pkt.setdefault("timestamp", ts_str)
+    pkt.setdefault("src_ip",    None)
+    pkt.setdefault("dst_ip",    None)
+    pkt.setdefault("src_port",  None)
+    pkt.setdefault("dst_port",  None)
+    pkt.setdefault("protocol",  "Unknown")
+    pkt.setdefault("length",    0)
+    pkt.setdefault("info",      "")
+    pkt.setdefault("raw_hex",   "")
+    pkt.setdefault("ttl",       None)
+    pkt.setdefault("flags",     None)
+
+    payload_hex = pkt.pop("payload_hex", None)
+    if payload_hex and len(payload_hex) <= 131072:  # 64 KB decoded
+        try:
+            pkt["_payload"] = bytes.fromhex(payload_hex)
+        except ValueError:
+            pass
+
+
+def inject_packet(pkt: dict) -> bool:
+    """
+    Inject a single packet directly into the live stream from Python code.
+
+    This is the zero-overhead path for callers that run **in the same process**
+    as NetCapture.  The packet bypasses all network and WebSocket machinery and
+    is handed straight to the capture manager.
+
+    Parameters
+    ----------
+    pkt:
+        Packet dict.  Accepts the same fields as the ``/ws/inject`` WebSocket
+        endpoint (``protocol``, ``length``, ``src_ip``, ``dst_ip``,
+        ``src_port``, ``dst_port``, ``info``, ``raw_hex``, ``payload_hex``,
+        ``abs_time``, ``timestamp``).  Missing fields are filled with defaults.
+        The dict is modified in-place.
+
+    Returns
+    -------
+    bool
+        ``True`` if the packet was accepted and emitted.
+        ``False`` if capture is not currently running (packet discarded).
+
+    Example
+    -------
+    ::
+
+        import netcapture
+
+        netcapture.inject_packet({
+            "protocol":    "UDP",
+            "length":      48,
+            "src_ip":      "192.168.1.50",
+            "dst_ip":      "192.168.1.1",
+            "src_port":    9001,
+            "dst_port":    9001,
+            "info":        "sensor reading",
+            "payload_hex": "4e430108...",
+        })
+    """
+    if not manager.is_running:
+        return False
+    _normalize_inject_packet(pkt)
+    manager._emit_packet(pkt)
+    return True
+
+
+async def _inject_ws_handler(websocket: WebSocket) -> None:
+    """
+    Core WebSocket injection handler — shared by the router endpoint and
+    :func:`start_inject_server`.
+    """
+    await websocket.accept()
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                await websocket.send_text(json.dumps({"ok": False, "error": str(exc)}))
+                continue
+
+            packets = data if isinstance(data, list) else [data]
+
+            if not manager.is_running:
+                await websocket.send_text(json.dumps({
+                    "ok": False,
+                    "discarded": len([p for p in packets if isinstance(p, dict)]),
+                    "error": "capture not running",
+                }))
+                continue
+
+            injected = 0
+            for pkt in packets:
+                if not isinstance(pkt, dict):
+                    continue
+                _normalize_inject_packet(pkt)
+                manager._emit_packet(pkt)
+                injected += 1
+
+            await websocket.send_text(json.dumps({"ok": True, "injected": injected}))
+
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+
+
+async def start_inject_server(host: str = "0.0.0.0", port: int = 8765) -> None:
+    """
+    Run a standalone WebSocket injection server on a dedicated port.
+
+    Useful when NetCapture is embedded inside a larger FastAPI application and
+    you need the injection endpoint on its own port — separate from the main
+    application port.
+
+    The server exposes a single endpoint at ``/ws/inject`` and accepts the same
+    JSON packet format as the router's ``/ws/inject`` endpoint.
+
+    Parameters
+    ----------
+    host:
+        Interface to bind.  Defaults to ``"0.0.0.0"`` (all interfaces).
+    port:
+        TCP port to listen on.  Defaults to ``8765``.
+
+    Usage
+    -----
+    Start from your app's lifespan (recommended)::
+
+        import asyncio
+        from contextlib import asynccontextmanager
+        import netcapture
+
+        @asynccontextmanager
+        async def lifespan(app):
+            task = asyncio.create_task(
+                netcapture.start_inject_server(host="0.0.0.0", port=9000)
+            )
+            yield
+            task.cancel()
+
+        app = FastAPI(lifespan=lifespan)
+        app.include_router(netcapture.create_router(), prefix="/netcapture")
+
+    Injectors then connect to ``ws://yourhost:9000/ws/inject`` regardless of
+    which port the main FastAPI application is running on.
+    """
+    import contextlib
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.routing import WebSocketRoute
+
+    class _Server(uvicorn.Server):
+        """Uvicorn server that skips signal-handler installation.
+
+        When running as an asyncio task inside an existing uvicorn process the
+        default ``capture_signals`` implementation would replace the outer
+        server's SIGTERM/SIGINT handlers with its own.  Returning a no-op
+        context manager prevents that conflict while still allowing the outer
+        process to handle shutdown normally.
+        """
+        def capture_signals(self):  # type: ignore[override]
+            return contextlib.nullcontext()
+
+    inject_app = Starlette(routes=[WebSocketRoute("/ws/inject", _inject_ws_handler)])
+    config = uvicorn.Config(inject_app, host=host, port=port, log_level="warning")
+    try:
+        await _Server(config).serve()
+    except OSError as exc:
+        print(
+            f"[netcapture] inject server could not bind to {host}:{port} — {exc}. "
+            "The main application continues; WebSocket injection on this port is unavailable."
+        )
+
+
 def _parse_addr(addr: str) -> tuple[str, int | None]:
     """Split 'host:port' into (host, port), handling bare IPv6 addresses."""
     if not addr:
@@ -466,63 +648,7 @@ def create_router(
           {"ok": true,  "injected": N}   — N packets accepted and emitted
           {"ok": false, "error": "..."}  — JSON parse failure
         """
-        await websocket.accept()
-        try:
-            while True:
-                raw = await websocket.receive_text()
-                try:
-                    data = json.loads(raw)
-                except json.JSONDecodeError as exc:
-                    await websocket.send_text(json.dumps({"ok": False, "error": str(exc)}))
-                    continue
-
-                packets = data if isinstance(data, list) else [data]
-
-                now     = _datetime.now()
-                rel     = _time.time() - _get_session_start()
-                ts_str  = f"{int(rel // 60):02d}:{rel % 60:06.3f}"
-                abs_str = now.strftime("%H:%M:%S.") + f"{now.microsecond // 1000:03d}"
-
-                if not manager.is_running:
-                    await websocket.send_text(json.dumps({
-                        "ok": False,
-                        "discarded": len([p for p in packets if isinstance(p, dict)]),
-                        "error": "capture not running",
-                    }))
-                    continue
-
-                injected = 0
-                for pkt in packets:
-                    if not isinstance(pkt, dict):
-                        continue
-
-                    pkt.setdefault("abs_time",  abs_str)
-                    pkt.setdefault("timestamp", ts_str)
-                    pkt.setdefault("src_ip",    None)
-                    pkt.setdefault("dst_ip",    None)
-                    pkt.setdefault("src_port",  None)
-                    pkt.setdefault("dst_port",  None)
-                    pkt.setdefault("protocol",  "Unknown")
-                    pkt.setdefault("length",    0)
-                    pkt.setdefault("info",      "")
-                    pkt.setdefault("raw_hex",   "")
-                    pkt.setdefault("ttl",       None)
-                    pkt.setdefault("flags",     None)
-
-                    payload_hex = pkt.pop("payload_hex", None)
-                    if payload_hex and len(payload_hex) <= 131072:  # 64 KB decoded
-                        try:
-                            pkt["_payload"] = bytes.fromhex(payload_hex)
-                        except ValueError:
-                            pass
-
-                    manager._emit_packet(pkt)
-                    injected += 1
-
-                await websocket.send_text(json.dumps({"ok": True, "injected": injected}))
-
-        except (WebSocketDisconnect, RuntimeError):
-            pass
+        await _inject_ws_handler(websocket)
 
     @router.websocket("/ws/capture")
     async def ws_capture(websocket: WebSocket):
