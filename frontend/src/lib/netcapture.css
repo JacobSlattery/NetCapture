@@ -38,8 +38,10 @@
   --nc-proto-ip:      #15803d;
   --nc-proto-trans:   #b45309;
   --nc-proto-payload: #7e22ce;
-  /* Row hover tint */
+  /* Row hover & selection */
   --nc-row-hover: rgb(96 165 250 / 0.22);
+  --nc-row-selected: #dbeafe;
+  --nc-row-selected-border: #2563eb;
   /* Protocol palette */
   --nc-p-tcp:     #3b82f6;
   --nc-p-udp:     #10b981;
@@ -83,6 +85,8 @@
   --nc-proto-trans:   #fcd34d;
   --nc-proto-payload: #d8b4fe;
   --nc-row-hover: rgb(96 165 250 / 0.30);
+  --nc-row-selected: #005999;
+  --nc-row-selected-border: #2dd4bf;
   --nc-status-ok:   #4ade80;
   --nc-status-warn: #facc15;
   --nc-status-err:  #f87171;
@@ -99,9 +103,11 @@
 .nc-tint-https { background-color: var(--nc-p-https-tint); }
 .nc-tint-arp   { background-color: var(--nc-p-arp-tint);   }
 
-/* ── Packet row hover state ──────────────────────────────────────────────── */
-/* Applied to unselected packet rows. Plain CSS so it works without Tailwind */
-/* generating the bg-[var(--nc-row-hover)] arbitrary-value utility class.    */
+/* ── Packet row hover/selection state ───────────────────────────────────── */
+.nc-row-selected {
+  background-color: var(--nc-row-selected);
+  border-left: 2px solid var(--nc-row-selected-border);
+}
 .nc-row-unselected {
   border-left: 2px solid transparent;
   cursor: pointer;

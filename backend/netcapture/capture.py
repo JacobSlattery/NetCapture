@@ -83,13 +83,19 @@ def _udp_checksum_ok(udp_seg: bytes, src_bytes: bytes, dst_bytes: bytes) -> bool
     return _ones_complement_sum(pseudo + udp_seg) == 0xFFFF
 
 
-def compute_warnings(raw: bytes) -> list[str]:
+def compute_warnings(raw: bytes, *, local_ip: str | None = None) -> list[str]:
     """
     Run all network-level validations on a raw IPv4 packet and return a list
     of human-readable warning strings.  An empty list means no issues found.
 
     This is intentionally kept cheap: one pass over the IP header + one pseudo-
     header checksum for the transport layer.  It is safe to call on every packet.
+
+    When *local_ip* is supplied, checksum warnings are suppressed for packets
+    whose source IP matches.  Windows (and many other OSes) offload checksum
+    computation to the NIC for locally-generated traffic, so outgoing frames
+    captured via SIO_RCVALL will almost always carry placeholder checksums that
+    fail validation — the hardware fills in the correct value after capture.
 
     Public so that _manager.py can call it for injected packets (which bypass
     the parse_packet() path) without duplicating the logic.
@@ -107,6 +113,16 @@ def compute_warnings(raw: bytes) -> list[str]:
     proto_num  = raw[9]
     src_bytes  = raw[12:16]
     dst_bytes  = raw[16:20]
+
+    # Suppress checksum warnings for locally-originated packets — their
+    # checksums are filled in by the NIC after capture (offloading).
+    if local_ip is not None:
+        import socket as _sock
+        try:
+            if src_bytes == _sock.inet_aton(local_ip):
+                return warnings
+        except OSError:
+            pass
 
     # Clip to the IP-declared total length so that any link-layer padding
     # (e.g. Ethernet minimum-frame zero-fill) is excluded from checksum math.
@@ -207,7 +223,8 @@ def _tcp_flags(flag_byte: int) -> str:
     return ", ".join(parts) or "ACK"
 
 
-def parse_packet(raw: bytes, start_time: float, seq: int) -> dict | None:
+def parse_packet(raw: bytes, start_time: float, seq: int, *,
+                  local_ip: str | None = None) -> dict | None:
     """Parse a raw IP packet (no Ethernet header) into a frontend-compatible dict."""
     if len(raw) < 20:
         return None
@@ -274,7 +291,7 @@ def parse_packet(raw: bytes, start_time: float, seq: int) -> dict | None:
         )
 
     # ── Checksum validation ───────────────────────────────────────────────────
-    warnings = compute_warnings(raw)
+    warnings = compute_warnings(raw, local_ip=local_ip)
 
     # Raw sockets on Windows give us the IP packet without an Ethernet header.
     # We send only what we actually have — the frontend detects IP-only frames.
@@ -433,7 +450,8 @@ class RawCapture:
                     break
                 raw = self._sock.recv(self._buf_size)
                 self._seq += 1
-                parsed = parse_packet(raw, self._start, self._seq)
+                parsed = parse_packet(raw, self._start, self._seq,
+                                      local_ip=self._bind_ip)
                 if not parsed:
                     continue
                 # Pre-filter: discard non-matching packets before they consume

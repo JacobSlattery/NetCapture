@@ -57,7 +57,7 @@ def write_pcap(packets: list[dict], session_start: float | None = None) -> bytes
         PCAP_MAGIC, PCAP_VERSION_MAJ, PCAP_VERSION_MIN, 0, 0, PCAP_SNAPLEN, linktype
     )
 
-    base_ts = session_start or time.time()
+    base_ts = session_start if session_start is not None else time.time()
     for pkt in packets:
         raw = bytes.fromhex(pkt.get("raw_hex") or "")
         if not raw:

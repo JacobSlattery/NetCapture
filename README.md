@@ -430,6 +430,106 @@ app.include_router(netcapture.create_router(), prefix="/netcapture")
 
 > **Port conflicts / permission errors** — if the port is already in use or the process lacks permission (ports below 1024 typically require root), `start_inject_server` logs a warning and returns cleanly. The main application and the `/ws/inject` endpoint on the main router continue to work normally; only the dedicated port is unavailable.
 
+#### Programmatic Capture Control
+
+If your application runs in the same Python process as NetCapture, you can control the entire lifecycle without making HTTP calls:
+
+```python
+import asyncio
+import netcapture
+
+async def main():
+    # Mount the router (if you're also serving the UI)
+    # app.include_router(netcapture.create_router(), prefix="/netcapture")
+
+    # Start capture in injection-only mode (no network capture needed)
+    mode = await netcapture.start_capture()  # defaults to interface="injected"
+
+    # Inject a single packet
+    netcapture.inject_packet({
+        "protocol":    "UDP",
+        "length":      48,
+        "src_ip":      "192.168.1.50",
+        "dst_ip":      "192.168.1.1",
+        "src_port":    9001,
+        "dst_port":    9001,
+        "info":        "sensor reading",
+        "payload_hex": "4e430108...",
+    })
+
+    # High-throughput batch injection (one broadcast for all packets)
+    count = netcapture.inject_batch([pkt1, pkt2, pkt3])
+
+    # Check status
+    status = netcapture.get_status()  # {"running": True, "mode": "inject", ...}
+
+    # Stop and reset
+    await netcapture.stop_capture()
+    netcapture.reset_session()
+
+asyncio.run(main())
+```
+
+`start_capture()` accepts the same parameters as the HTTP endpoint: `interface` (default `"injected"`), `filter`, and `bpf_filter`. Use `interface="any"` or a specific adapter name to capture real network traffic alongside injection.
+
+#### Consuming Packets Programmatically
+
+NetCapture can act as a capture engine that pipes packets to your application code. Three consumption patterns are available:
+
+**Callback-based** — lightweight, fires synchronously on the event loop for every packet:
+
+```python
+@netcapture.on_packet
+def handle(pkt):
+    print(pkt["src_ip"], "→", pkt["dst_ip"], pkt.get("decoded"))
+
+# Later:
+netcapture.off_packet(handle)
+```
+
+**Async stream** — ideal for `async for` loops with backpressure control:
+
+```python
+async def process():
+    stream = netcapture.packet_stream(queue_size=5000)
+    try:
+        async for pkt in stream:
+            await forward_to_database(pkt)
+            if should_stop:
+                break
+    finally:
+        stream.close()
+```
+
+The queue is registered immediately on creation, so packets injected between `packet_stream()` and the first `await` are captured. Multiple independent streams can run simultaneously.
+
+**Stats callback** — fires once per second with throughput counters:
+
+```python
+@netcapture.on_stats
+def on_stats(stats):
+    print(f"{stats['packets_per_sec']} pkt/s, {stats['bytes_per_sec']} B/s")
+    print(f"Total: {stats['total_packets']} packets, {stats['total_bytes']} bytes")
+    print(f"Protocols: {stats['protocol_counts']}")
+```
+
+**Buffer snapshot** — get all buffered packets at any point:
+
+```python
+packets = netcapture.get_buffer()  # list of up to 20,000 most recent packet dicts
+```
+
+**Advanced: direct manager access** — the `manager` singleton is exported for power users:
+
+```python
+q = netcapture.manager.subscribe()    # raw asyncio.Queue (JSON-serialized messages)
+netcapture.manager.unsubscribe(q)
+netcapture.manager.get_buffer()
+netcapture.manager.is_running
+```
+
+> **Callback performance note:** Packet callbacks run synchronously on the asyncio event loop thread. Keep them lightweight — offload heavy work to a thread pool or queue. A callback that raises an exception is silently skipped; other callbacks and the capture pipeline are not affected. Do not mutate the packet dict passed to callbacks — it is shared with the buffer and WebSocket serialization.
+
 #### Custom Profiles
 
 Profiles populate the interface/profile selector dropdown and bundle an interface, capture filter, and optional BPF filter into a named preset. Users can also create, edit, and delete profiles at runtime via the profile editor in Settings.
@@ -620,19 +720,83 @@ address_book=[{"id": "1", "address": "127.0.0.1", "name": "UDP Mock Device"}]
 
 Then run `pixi run mock-device --format nc-frame` and start capturing on the loopback interface — the Source column will show **UDP Mock Device** instead of the raw IP.
 
+#### Programmatic Capture Control
+
+If your application runs in the same Python process as NetCapture, you can control the entire lifecycle without making HTTP calls:
+
+```python
+import asyncio
+import netcapture
+
+async def main():
+    # Mount the router (if you're also serving the UI)
+    # app.include_router(netcapture.create_router(), prefix="/netcapture")
+
+    # Start capture in injection-only mode (no network capture needed)
+    mode = await netcapture.start_capture()  # defaults to interface="injected"
+
+    # Inject a single packet
+    netcapture.inject_packet({
+        "protocol":    "UDP",
+        "length":      48,
+        "src_ip":      "192.168.1.50",
+        "dst_ip":      "192.168.1.1",
+        "src_port":    9001,
+        "dst_port":    9001,
+        "info":        "sensor reading",
+        "payload_hex": "4e430108...",
+    })
+
+    # High-throughput batch injection (one broadcast for all packets)
+    count = netcapture.inject_batch([pkt1, pkt2, pkt3])
+
+    # Check status
+    status = netcapture.get_status()  # {"running": True, "mode": "inject", ...}
+
+    # Stop and reset
+    await netcapture.stop_capture()
+    netcapture.reset_session()
+
+asyncio.run(main())
+```
+
+`start_capture()` accepts the same parameters as the HTTP endpoint: `interface` (default `"injected"`), `filter`, and `bpf_filter`. Use `interface="any"` or a specific adapter name to capture real network traffic alongside injection.
+
+The `manager` singleton is also exported for advanced use (e.g. `netcapture.manager.get_buffer()`, `netcapture.manager.subscribe()`).
+
 #### Exported symbols
 
 | Symbol | What it is |
 |--------|-----------|
-| `create_router(profiles, extra_interpreters, address_book, profiles_path)` | FastAPI router factory |
-| `start_inject_server(host, port)` | Async coroutine — runs a standalone WS inject server on a dedicated port |
-| `inject_packet(pkt)` | Direct in-process injection — zero overhead, no WebSocket required |
+| **Router** | |
+| `create_router(profiles, extra_interpreters, address_book, watchlists, profiles_path, watchlists_path)` | FastAPI router factory |
+| **Capture lifecycle** | |
+| `start_capture(interface, filter, bpf_filter)` | Async — start the capture engine programmatically |
+| `stop_capture()` | Async — stop the capture engine |
+| `get_status()` | Return capture status dict (`running`, `mode`, `iface`, `packets`) |
+| `reset_session()` | Reset the session timer and clear the packet buffer |
+| **Injection** | |
+| `inject_packet(pkt)` | Inject one packet — zero overhead, no WebSocket required |
+| `inject_batch(packets)` | Inject multiple packets — single broadcast for all |
+| `start_inject_server(host, port)` | Async — runs a standalone WS inject server on a dedicated port |
+| **Packet consumption** | |
+| `on_packet(callback)` | Register a per-packet callback (sync, on event loop); works as `@decorator` |
+| `off_packet(callback)` | Unregister a packet callback |
+| `on_stats(callback)` | Register a per-second stats callback; works as `@decorator` |
+| `off_stats(callback)` | Unregister a stats callback |
+| `packet_stream(queue_size=1000)` | Create an async iterator of packet dicts (`PacketStream`) |
+| `get_buffer()` | Snapshot of the rolling packet buffer (list of dicts) |
+| **Interpreters** | |
 | `register_interpreter(interp, prepend=False)` | Add an interpreter to the global registry |
 | `Interpreter` | `Protocol` class — use for type hints when building interpreters |
 | `DecodedFrame` | Return type of `decode()` — holds interpreter name + field list |
 | `DecodedField` | A single decoded field: `key`, `value`, `type` |
+| **Defaults & advanced** | |
 | `DEFAULT_PROFILES` | The built-in profile list — extend rather than replace |
-| `CaptureManager` | The capture engine — advanced use only |
+| `DEFAULT_WATCHLISTS` | The built-in watchlist list — extend rather than replace |
+| `manager` | The `CaptureManager` singleton — subscribe, buffer, etc. |
+| `CaptureManager` | The capture engine class |
+| `PacketStream` | Type returned by `packet_stream()` — for type annotations |
 
 ### Frontend — Svelte Component
 

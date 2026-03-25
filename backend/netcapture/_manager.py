@@ -129,6 +129,11 @@ class CaptureManager:
         self._buffer: deque[dict] = deque(maxlen=self.BUFFER_SIZE)
         self._subs: set[asyncio.Queue] = set()
 
+        # Programmatic packet/stats consumption (raw dicts, not JSON)
+        self._packet_cbs: list = []   # list[Callable[[dict], object]]
+        self._stats_cbs: list = []    # list[Callable[[dict], object]]
+        self._packet_queues: set[asyncio.Queue] = set()
+
     async def start(self, iface: str = "any", filter_str: str = "", bpf_filter: str = "") -> str:
         async with self._start_lock:
             return await self._start_locked(iface, filter_str, bpf_filter)
@@ -236,6 +241,20 @@ class CaptureManager:
         self._buffer.extend(packets)
 
         if packets:
+            # Notify programmatic consumers
+            for p in packets:
+                for cb in self._packet_cbs:
+                    try:
+                        cb(p)
+                    except Exception:
+                        pass
+                for q in list(self._packet_queues):
+                    try:
+                        q.put_nowait(p)
+                    except asyncio.QueueFull:
+                        pass
+
+            # Notify WebSocket subscribers
             msg = json.dumps({"type": "batch", "data": list(self._buffer)})
             for q in list(self._subs):
                 try:
@@ -321,6 +340,21 @@ class CaptureManager:
         self._sec_pkts  += 1
         self._sec_bytes += pkt["length"]
         self._buffer.append(pkt)
+
+        # Notify programmatic consumers (raw dict, not JSON).
+        # Callbacks must not mutate pkt — it is shared with the buffer
+        # and WebSocket serialisation path.
+        for cb in self._packet_cbs:
+            try:
+                cb(pkt)
+            except Exception:
+                pass
+        for q in list(self._packet_queues):
+            try:
+                q.put_nowait(pkt)
+            except asyncio.QueueFull:
+                pass
+
         return pkt
 
     def _broadcast_batch(self, pkts: list[dict]) -> None:
@@ -352,15 +386,23 @@ class CaptureManager:
                 pass
 
     def _emit_stats(self) -> None:
-        msg = json.dumps({"type": "stats", "data": {
+        stats = {
             "total_packets":   self._seq,
             "total_bytes":     self._total_bytes,
             "packets_per_sec": self._sec_pkts,
             "bytes_per_sec":   self._sec_bytes,
             "protocol_counts": dict(self._proto_counts),
-        }})
+        }
         self._sec_pkts  = 0
         self._sec_bytes = 0
+
+        for cb in self._stats_cbs:
+            try:
+                cb(stats)
+            except Exception:
+                pass
+
+        msg = json.dumps({"type": "stats", "data": stats})
         for q in list(self._subs):
             try:
                 q.put_nowait(msg)

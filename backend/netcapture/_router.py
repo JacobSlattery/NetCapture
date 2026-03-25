@@ -181,6 +181,271 @@ def inject_packet(pkt: dict) -> bool:
     return True
 
 
+def inject_batch(packets: list[dict]) -> int:
+    """
+    Inject multiple packets in a single batched broadcast.
+
+    This is the high-throughput variant of :func:`inject_packet`.  All packets
+    are normalized, processed, and then broadcast as one WebSocket message —
+    significantly more efficient than calling ``inject_packet()`` in a loop
+    when sending many packets at once.
+
+    Parameters
+    ----------
+    packets:
+        List of packet dicts (same format as ``inject_packet``).
+        Each dict is modified in-place.
+
+    Returns
+    -------
+    int
+        Number of packets accepted and emitted.  Returns ``0`` if capture
+        is not currently running (all packets discarded).
+    """
+    if not manager.is_running:
+        return 0
+    ready: list[dict] = []
+    for pkt in packets:
+        if not isinstance(pkt, dict):
+            continue
+        _normalize_inject_packet(pkt)
+        processed = manager._process_packet(pkt, apply_filter=False)
+        if processed is not None:
+            ready.append(processed)
+    manager._broadcast_batch(ready)
+    return len(ready)
+
+
+async def start_capture(
+    interface: str = "injected",
+    filter: str = "",
+    bpf_filter: str = "",
+) -> str:
+    """
+    Start the capture engine programmatically.
+
+    This is the in-process equivalent of ``POST /api/capture/start``.
+    Defaults to ``interface="injected"`` (injection-only mode — no network
+    capture, just accept packets from ``inject_packet`` / ``inject_batch``).
+
+    Parameters
+    ----------
+    interface:
+        Network interface name (``"any"``, ``"Ethernet"``, ``"loopback"``,
+        etc.) or ``"injected"`` for injection-only mode.
+    filter:
+        Python-style capture filter (e.g. ``"port == 5000"``).
+    bpf_filter:
+        BPF filter string (npcap mode only).
+
+    Returns
+    -------
+    str
+        The capture mode that was started (``"inject"``, ``"scapy"``,
+        ``"real"``).
+
+    Raises
+    ------
+    RuntimeError
+        If no capture method is available for the requested interface.
+    """
+    return await manager.start(interface, filter, bpf_filter=bpf_filter)
+
+
+async def stop_capture() -> None:
+    """
+    Stop the capture engine programmatically.
+
+    This is the in-process equivalent of ``POST /api/capture/stop``.
+    Safe to call even when capture is not running.
+    """
+    await manager.stop()
+
+
+def reset_session() -> None:
+    """
+    Reset the session timer and clear the packet buffer.
+
+    This is the in-process equivalent of ``POST /api/reset-session``.
+    """
+    reset_session_start()
+    manager.reset()
+
+
+def get_status() -> dict:
+    """
+    Return the current capture status.
+
+    This is the in-process equivalent of ``GET /api/capture/status``.
+
+    Returns
+    -------
+    dict
+        Keys: ``running`` (bool), ``mode`` (str), ``iface`` (str),
+        ``packets`` (int).
+    """
+    return manager.status()
+
+
+def get_buffer() -> list[dict]:
+    """
+    Return a snapshot of the current packet buffer.
+
+    Returns a list of all packets currently in the rolling buffer (up to
+    ``CaptureManager.BUFFER_SIZE`` most recent packets).  Each entry is
+    a fully processed packet dict with ``id``, ``protocol``, ``decoded``,
+    etc.
+
+    The returned list is a copy — mutating it does not affect the internal
+    buffer.
+    """
+    return manager.get_buffer()
+
+
+def on_packet(callback) -> None:
+    """
+    Register a callback that fires for every captured or injected packet.
+
+    The callback receives a single argument: the processed packet dict
+    (same shape as the dicts in :func:`get_buffer`).  It is called
+    synchronously on the asyncio event loop thread — keep it lightweight
+    or offload heavy work to a thread/queue.
+
+    **Do not mutate the dict** — it is shared with the packet buffer and
+    WebSocket serialisation path.
+
+    Can also be used as a decorator::
+
+        @netcapture.on_packet
+        def handle(pkt):
+            print(pkt["protocol"], pkt.get("decoded"))
+
+    Parameters
+    ----------
+    callback:
+        ``(pkt: dict) -> None``
+    """
+    if callback not in manager._packet_cbs:
+        manager._packet_cbs.append(callback)
+    return callback  # allow decorator usage
+
+
+def off_packet(callback) -> None:
+    """
+    Unregister a packet callback previously registered with :func:`on_packet`.
+    """
+    try:
+        manager._packet_cbs.remove(callback)
+    except ValueError:
+        pass
+
+
+def on_stats(callback) -> None:
+    """
+    Register a callback that fires on every stats tick (~1 second).
+
+    The callback receives a dict with keys: ``total_packets``,
+    ``total_bytes``, ``packets_per_sec``, ``bytes_per_sec``,
+    ``protocol_counts``.
+
+    Can also be used as a decorator::
+
+        @netcapture.on_stats
+        def handle(stats):
+            print(f"{stats['packets_per_sec']} pkt/s")
+    """
+    if callback not in manager._stats_cbs:
+        manager._stats_cbs.append(callback)
+    return callback
+
+
+def off_stats(callback) -> None:
+    """
+    Unregister a stats callback previously registered with :func:`on_stats`.
+    """
+    try:
+        manager._stats_cbs.remove(callback)
+    except ValueError:
+        pass
+
+
+class PacketStream:
+    """
+    Async iterator that yields packet dicts as they arrive.
+
+    The queue is registered immediately on construction so that packets
+    injected between creation and the first iteration are not lost.
+
+    Usage::
+
+        async for pkt in netcapture.packet_stream():
+            print(pkt["src_ip"], "→", pkt["dst_ip"])
+            if should_stop:
+                break
+
+        # Or with manual lifecycle:
+        stream = netcapture.packet_stream()
+        pkt = await stream.__anext__()
+        stream.close()  # unregisters from the manager
+
+    Parameters
+    ----------
+    queue_size:
+        Maximum number of packets buffered before new arrivals are dropped.
+    """
+
+    __slots__ = ("_q",)
+
+    def __init__(self, queue_size: int = 1000) -> None:
+        self._q: asyncio.Queue = asyncio.Queue(maxsize=queue_size)
+        manager._packet_queues.add(self._q)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self) -> dict:
+        return await self._q.get()
+
+    def close(self) -> None:
+        """Unregister the queue from the manager."""
+        manager._packet_queues.discard(self._q)
+
+    async def aclose(self) -> None:
+        """Async close for ``async for`` cleanup."""
+        self.close()
+
+
+def packet_stream(*, queue_size: int = 1000) -> PacketStream:
+    """
+    Create an async iterator that yields packet dicts as they arrive.
+
+    The returned :class:`PacketStream` registers its queue **immediately**,
+    so packets injected between creation and the first ``await`` are captured.
+
+    Usage::
+
+        async for pkt in netcapture.packet_stream():
+            print(pkt["src_ip"], "→", pkt["dst_ip"])
+            if should_stop:
+                break  # cleanup is automatic
+
+    Or with explicit lifecycle::
+
+        stream = netcapture.packet_stream()
+        try:
+            pkt = await stream.__anext__()
+        finally:
+            stream.close()
+
+    Parameters
+    ----------
+    queue_size:
+        Maximum number of packets buffered before new arrivals are dropped.
+        Increase for bursty high-volume traffic.
+    """
+    return PacketStream(queue_size)
+
+
 async def _inject_ws_handler(websocket: WebSocket) -> None:
     """
     Core WebSocket injection handler — shared by the router endpoint and

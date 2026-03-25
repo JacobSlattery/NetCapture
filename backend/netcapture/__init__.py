@@ -60,6 +60,43 @@ Registering interpreters independently (before create_router is called)
     register_interpreter(MyInterpreter())            # appended (runs after built-ins)
     register_interpreter(MyInterpreter(), prepend=True)  # prepended (runs before built-ins)
 
+Programmatic capture control (no HTTP required)
+────────────────────────────────────────────────
+    import netcapture
+
+    # Start capture in injection-only mode (default)
+    await netcapture.start_capture()
+
+    # Inject packets directly (zero overhead)
+    netcapture.inject_packet({"protocol": "UDP", "length": 48, ...})
+
+    # Batch inject for high throughput
+    netcapture.inject_batch([pkt1, pkt2, pkt3])
+
+    # Check status, stop, reset
+    netcapture.get_status()      # {"running": True, "mode": "inject", ...}
+    await netcapture.stop_capture()
+    netcapture.reset_session()
+
+Consuming packets programmatically
+───────────────────────────────────
+    # Callback-based (fires for every packet, sync)
+    @netcapture.on_packet
+    def handle(pkt):
+        print(pkt["protocol"], pkt.get("decoded"))
+
+    # Async stream
+    async for pkt in netcapture.packet_stream():
+        print(pkt["src_ip"], "→", pkt["dst_ip"])
+
+    # Stats callback (~1 s tick)
+    @netcapture.on_stats
+    def on_stats(stats):
+        print(f"{stats['packets_per_sec']} pkt/s")
+
+    # Buffer snapshot
+    packets = netcapture.get_buffer()
+
 Running the injection endpoint on a dedicated port
 ──────────────────────────────────────────────────
 If your host application is already running on a fixed port and injectors
@@ -93,21 +130,57 @@ The frontend component must be configured with matching URLs:
     />
 """
 
-from ._router import create_router, start_inject_server, inject_packet
-from ._manager import CaptureManager
+from ._router import (
+    create_router,
+    start_inject_server,
+    inject_packet,
+    inject_batch,
+    start_capture,
+    stop_capture,
+    reset_session,
+    get_status,
+    get_buffer,
+    on_packet,
+    off_packet,
+    on_stats,
+    off_stats,
+    packet_stream,
+    PacketStream,
+)
+from ._manager import CaptureManager, manager
 from .interpreters import register as register_interpreter, Interpreter, DecodedFrame, DecodedField
 from .profiles import DEFAULT_PROFILES
 from .watchlists import DEFAULT_WATCHLISTS
 
 __all__ = [
+    # Router factory
     "create_router",
-    "start_inject_server",
+    # Capture lifecycle
+    "start_capture",
+    "stop_capture",
+    "reset_session",
+    "get_status",
+    "get_buffer",
+    # Injection
     "inject_packet",
+    "inject_batch",
+    "start_inject_server",
+    # Packet consumption
+    "on_packet",
+    "off_packet",
+    "on_stats",
+    "off_stats",
+    "packet_stream",
+    "PacketStream",
+    # Core
+    "manager",
     "CaptureManager",
+    # Interpreters
     "register_interpreter",
     "Interpreter",
     "DecodedFrame",
     "DecodedField",
+    # Defaults
     "DEFAULT_PROFILES",
     "DEFAULT_WATCHLISTS",
 ]

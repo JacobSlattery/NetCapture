@@ -105,41 +105,41 @@ class TestUDP:
 
     def test_seq_and_id(self):
         pkt = parse_packet(make_udp_pkt(), 0.0, 42)
-        assert pkt["id"] == 42
+        assert pkt["id"] == 42 # type: ignore
 
     def test_dns_label(self):
         pkt = parse_packet(make_udp_pkt(dport=53), 0.0, 1)
-        assert pkt["protocol"] == "DNS"
+        assert pkt["protocol"] == "DNS" # type: ignore
 
     def test_dhcp_label(self):
         pkt = parse_packet(make_udp_pkt(dport=67), 0.0, 1)
-        assert pkt["protocol"] == "DHCP"
+        assert pkt["protocol"] == "DHCP" # type: ignore
 
     def test_length_in_ip_header(self):
         raw = make_udp_pkt(data=b"x" * 100)
         pkt = parse_packet(raw, 0.0, 1)
         # IP total length = 20 (IP) + 8 (UDP) + 100 (payload)
-        assert pkt["length"] == 128
+        assert pkt["length"] == 128 # type: ignore
 
     def test_ttl(self):
         transport = _udp(1000, 2000, b"ttl-test")
         raw = _ip_header(17, "1.2.3.4", "5.6.7.8", len(transport), ttl=128) + transport
         pkt = parse_packet(raw, 0.0, 1)
-        assert pkt["ttl"] == 128
+        assert pkt["ttl"] == 128 # type: ignore
 
     def test_info_contains_ports(self):
         pkt = parse_packet(make_udp_pkt(sport=11111, dport=22222), 0.0, 1)
-        assert "11111" in pkt["info"]
-        assert "22222" in pkt["info"]
+        assert "11111" in pkt["info"] # type: ignore
+        assert "22222" in pkt["info"] # type: ignore
 
     def test_no_flags(self):
         pkt = parse_packet(make_udp_pkt(), 0.0, 1)
-        assert pkt["flags"] is None
+        assert pkt["flags"] is None # type: ignore
 
     def test_raw_hex_starts_with_ipv4(self):
         # raw_hex now begins at the IP layer — first nibble must be 4 (IPv4)
         pkt = parse_packet(make_udp_pkt(), 0.0, 1)
-        assert int(pkt["raw_hex"][0], 16) == 4
+        assert int(pkt["raw_hex"][0], 16) == 4 # type: ignore
 
 
 class TestTCP:
@@ -152,30 +152,30 @@ class TestTCP:
 
     def test_syn_flag(self):
         pkt = parse_packet(make_tcp_pkt(flags=0x02), 0.0, 1)
-        assert pkt["flags"] == "SYN"
+        assert pkt["flags"] == "SYN" # type: ignore
 
     def test_ack_flag(self):
         pkt = parse_packet(make_tcp_pkt(flags=0x10), 0.0, 1)
-        assert pkt["flags"] == "ACK"
+        assert pkt["flags"] == "ACK" # type: ignore
 
     def test_psh_ack_flags(self):
         pkt = parse_packet(make_tcp_pkt(flags=0x18), 0.0, 1)
-        assert "PSH" in pkt["flags"]
-        assert "ACK" in pkt["flags"]
+        assert "PSH" in pkt["flags"] # type: ignore
+        assert "ACK" in pkt["flags"] # type: ignore
 
     def test_fin_ack_flags(self):
         pkt = parse_packet(make_tcp_pkt(flags=0x11), 0.0, 1)
-        assert "FIN" in pkt["flags"]
-        assert "ACK" in pkt["flags"]
+        assert "FIN" in pkt["flags"] # type: ignore
+        assert "ACK" in pkt["flags"] # type: ignore
 
     def test_rst_flag(self):
         pkt = parse_packet(make_tcp_pkt(flags=0x04), 0.0, 1)
-        assert "RST" in pkt["flags"]
+        assert "RST" in pkt["flags"] # type: ignore
 
     def test_tls_label_on_443(self):
         # SYN has no TLS payload → falls back to TCP
         pkt = parse_packet(make_tcp_pkt(dport=443), 0.0, 1)
-        assert pkt["protocol"] == "TCP"
+        assert pkt["protocol"] == "TCP" # type: ignore
 
     def test_tls_label_with_payload(self):
         # TLS record header: type=22 (handshake), version=0x0303 (TLS 1.2), length=5
@@ -183,28 +183,28 @@ class TestTCP:
         transport = _tcp(54321, 443, flags=0x10, payload=tls_payload)
         raw = _ip_header(6, "10.0.0.1", "10.0.0.2", len(transport)) + transport
         pkt = parse_packet(raw, 0.0, 1)
-        assert pkt["protocol"] == "TLS"
+        assert pkt["protocol"] == "TLS" # type: ignore
 
     def test_ssh_label_on_22(self):
         # SYN has no SSH payload → falls back to TCP
         pkt = parse_packet(make_tcp_pkt(dport=22), 0.0, 1)
-        assert pkt["protocol"] == "TCP"
+        assert pkt["protocol"] == "TCP" # type: ignore
 
     def test_ssh_label_with_payload(self):
         transport = _tcp(54321, 22, flags=0x10, payload=b"SSH-2.0-OpenSSH")
         raw = _ip_header(6, "10.0.0.1", "10.0.0.2", len(transport)) + transport
         pkt = parse_packet(raw, 0.0, 1)
-        assert pkt["protocol"] == "SSH"
+        assert pkt["protocol"] == "SSH" # type: ignore
 
     def test_unknown_port_falls_back_to_tcp(self):
         pkt = parse_packet(make_tcp_pkt(dport=19999), 0.0, 1)
-        assert pkt["protocol"] == "TCP"
+        assert pkt["protocol"] == "TCP" # type: ignore
 
     def test_info_contains_flag_and_ips(self):
         pkt = parse_packet(make_tcp_pkt(src="1.2.3.4", dst="5.6.7.8", flags=0x02), 0.0, 1)
-        assert "SYN" in pkt["info"]
-        assert "1.2.3.4" in pkt["info"]
-        assert "5.6.7.8" in pkt["info"]
+        assert "SYN" in pkt["info"] # type: ignore
+        assert "1.2.3.4" in pkt["info"] # type: ignore
+        assert "5.6.7.8" in pkt["info"] # type: ignore
 
 
 class TestICMP:
@@ -216,16 +216,16 @@ class TestICMP:
 
     def test_echo_reply(self):
         pkt = parse_packet(make_icmp_pkt(icmp_type=0), 0.0, 1)
-        assert "Echo reply" in pkt["info"]
+        assert "Echo reply" in pkt["info"] # type: ignore
 
     def test_dest_unreachable(self):
         pkt = parse_packet(make_icmp_pkt(icmp_type=3, code=1), 0.0, 1)
-        assert "Dest unreachable" in pkt["info"]
+        assert "Dest unreachable" in pkt["info"] # type: ignore
 
     def test_no_ports(self):
         pkt = parse_packet(make_icmp_pkt(), 0.0, 1)
-        assert pkt["src_port"] is None
-        assert pkt["dst_port"] is None
+        assert pkt["src_port"] is None # type: ignore
+        assert pkt["dst_port"] is None # type: ignore
 
 
 class TestEdgeCases:
@@ -248,10 +248,10 @@ class TestEdgeCases:
 
     def test_timestamp_fields_present(self):
         pkt = parse_packet(make_udp_pkt(), time.time(), 1)
-        assert "timestamp" in pkt
-        assert "abs_time" in pkt
+        assert "timestamp" in pkt # type: ignore
+        assert "abs_time" in pkt # type: ignore
         # timestamp should be MM:SS.mmm format
-        assert ":" in pkt["timestamp"]
+        assert ":" in pkt["timestamp"] # type: ignore
 
     def test_raw_hex_correct_length(self):
         data = b"PAYLOAD"
@@ -260,7 +260,7 @@ class TestEdgeCases:
         # raw_hex starts at the IP layer — no Ethernet prefix
         ip_total = 20 + 8 + len(data)
         expected_hex_len = ip_total * 2
-        assert len(pkt["raw_hex"]) == expected_hex_len
+        assert len(pkt["raw_hex"]) == expected_hex_len # type: ignore
 
     def test_truncated_tcp_payload(self):
         # Only 15 bytes of TCP (header needs 20) → should still return a packet
