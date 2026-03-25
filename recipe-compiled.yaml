@@ -31,7 +31,10 @@ build:
 
 requirements:
   build:
-    - ${{ compiler('c') }}
+    - if: win
+      then: vs2022_win-64
+    - if: not win
+      then: ${{ compiler('c') }}
   host:
     - python
     - pip
