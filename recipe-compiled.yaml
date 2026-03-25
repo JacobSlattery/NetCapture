@@ -1,0 +1,56 @@
+# rattler-build recipe — Cython-compiled .conda package for netcapture
+# Build:  pixi run build-pkg-compiled   (runs build-ui first, then rattler-build)
+# Output: dist/conda/
+#
+# Implementation modules are compiled to native .pyd extensions.
+# Only public API stubs (__init__.py, __main__.py) ship as readable Python.
+#
+# Trade-offs vs pure-Python build (recipe.yaml):
+#   + Source code is not human-readable
+#   - Locked to a single Python version (cp312) and platform (win-64)
+#   - Stack traces show compiled function names, not source lines
+#   - Requires MSVC (VS 2022) on the build machine
+
+schema_version: 1
+
+context:
+  version: "1.0.0"
+
+package:
+  name: netcapture
+  version: ${{ version }}
+
+source:
+  path: backend/
+
+build:
+  script:
+    - python -m pip install . --no-deps --no-build-isolation -vv
+    # Strip .py, .c, and .pyc for Cython-compiled modules
+    - python strip_sources.py
+
+requirements:
+  build:
+    - vs2022_win-64
+  host:
+    - python
+    - pip
+    - setuptools >=68
+    - cython >=3
+  run:
+    - python
+    - fastapi >=0.111
+    - uvicorn >=0.30
+    - websockets >=12
+    - psutil >=6.1
+
+tests:
+  - python:
+      imports:
+        - netcapture
+  - script:
+      - python -c "from netcapture import create_router; print('ok')"
+
+about:
+  summary: NetCapture — embeddable real-time network capture and display library
+  license: MIT

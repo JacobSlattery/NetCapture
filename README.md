@@ -61,6 +61,47 @@ python backend/server.py   # FastAPI serves API + static files
 
 ---
 
+## Building a Conda Package
+
+Build NetCapture as a `.conda` package for installation into other pixi environments.
+
+### Pure Python (default)
+
+```bash
+pixi run build-pkg
+```
+
+Builds the frontend, then packages everything into a pure-Python `.conda` artifact at `dist/conda/`. Works with any Python 3.11-3.12, full stack traces, no compiler needed at build time.
+
+### Compiled (Cython)
+
+```bash
+pixi run build-pkg-compiled
+```
+
+Same as above but compiles implementation modules to native `.pyd` extensions via Cython. Source code is not human-readable in the output package. Only public API stubs (`__init__.py`, `__main__.py`, `interpreters/__init__.py`) remain as Python.
+
+**Requirements:** Visual Studio 2022 (any edition with C++ build tools).
+
+**Trade-offs vs pure Python:**
+- Source code is not directly readable
+- Locked to a single Python version (cp312) and platform (win-64)
+- Stack traces show compiled function names instead of source lines
+- `inspect.getsource()` and monkey-patching don't work on compiled modules
+
+### Installing the package
+
+In the consuming project's `pixi.toml`, point to the local channel:
+
+```toml
+channels = ["file:///C:/path/to/NetCapture/dist/conda", "conda-forge"]
+
+[dependencies]
+netcapture = ">=1.0.0"
+```
+
+---
+
 ## Capture Modes
 
 NetCapture selects a capture mode automatically, in order of preference:
@@ -322,6 +363,8 @@ Install the package:
 pip install ./backend            # basic (raw socket + WS inject modes)
 pip install ./backend[npcap]     # with scapy for Npcap support
 ```
+
+Or install from the conda package (see [Building a Conda Package](#building-a-conda-package)).
 
 Mount the router in your FastAPI app, choosing any prefix:
 ```python
@@ -1021,6 +1064,8 @@ NetCapture/
 |   |   |   +-- nc_frame.py  # built-in NC-Frame binary decoder
 |   |   +-- static/          # Built frontend (git-ignored, populated by build-ui)
 |   +-- server.py            # Standalone FastAPI entry point
+|   +-- setup.py             # Cython compilation (used by build-pkg-compiled)
+|   +-- strip_sources.py     # Post-build cleanup — removes .py/.c/.pyc for compiled modules
 |   +-- pyproject.toml       # Package metadata and dependencies
 +-- frontend/
 |   +-- src/
@@ -1052,6 +1097,8 @@ NetCapture/
 |   +-- fault_injector.py    # Test tool — injects packets with bad checksums and decoder errors
 +-- tests/                   # Pytest unit tests
 +-- pixi.toml                # Task runner and environment definitions
++-- recipe.yaml              # Conda recipe — pure-Python build
++-- recipe-compiled.yaml     # Conda recipe — Cython-compiled build
 ```
 
 ---

@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+*.so
 .Python
 *.egg-info/
 dist/
@@ -11,6 +12,10 @@ output/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Cython intermediates
+*.c
+!frontend/**/*.c
 
 # Node / npm
 node_modules/
