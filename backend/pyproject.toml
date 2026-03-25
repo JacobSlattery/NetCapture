@@ -20,8 +20,3 @@ npcap = ["scapy>=2.5"]
 [project.scripts]
 netcapture = "netcapture.__main__:main"
 
-[tool.setuptools.packages.find]
-include = ["netcapture*"]
-
-[tool.setuptools.package-data]
-netcapture = ["static/**/*"]

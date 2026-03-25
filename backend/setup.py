@@ -7,7 +7,14 @@ a normal pure-Python install for development.
 """
 
 import os
-from setuptools import setup, find_packages
+import warnings
+
+# Suppress setuptools' "Package X is absent from packages configuration" warnings.
+# These fire during build-backend discovery before setup() runs, so our explicit
+# packages list can't prevent them. The build works correctly regardless.
+warnings.filterwarnings("ignore", message=r"Package '.*' is absent")
+
+from setuptools import setup
 
 # Modules that contain implementation logic — compiled to native extensions.
 # Public API stubs (__init__.py, __main__.py) stay as readable Python.
@@ -40,4 +47,8 @@ try:
 except ImportError:
     ext_modules = []
 
-setup(ext_modules=ext_modules)
+setup(
+    packages=["netcapture", "netcapture.interpreters"],
+    package_data={"netcapture": ["static/**/*"]},
+    ext_modules=ext_modules,
+)
