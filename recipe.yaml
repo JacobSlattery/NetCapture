@@ -1,0 +1,42 @@
+# rattler-build recipe — produces a .conda package for netcapture
+# Build:  pixi run build-pkg   (runs build-ui first, then rattler-build)
+# Output: dist/conda/
+
+schema_version: 1
+
+context:
+  version: "1.0.0"
+
+package:
+  name: netcapture
+  version: ${{ version }}
+
+source:
+  path: backend/
+
+build:
+  script:
+    - python -m pip install . --no-deps --no-build-isolation -vv
+
+requirements:
+  host:
+    - python >=3.11,<3.13
+    - pip
+    - hatchling
+  run:
+    - python >=3.11,<3.13
+    - fastapi >=0.111
+    - uvicorn >=0.30
+    - websockets >=12
+    - psutil >=5.9
+
+tests:
+  - python:
+      imports:
+        - netcapture
+  - script:
+      - python -c "from netcapture import create_router; print('ok')"
+
+about:
+  summary: NetCapture — embeddable real-time network capture and display library
+  license: MIT

@@ -16,7 +16,8 @@ watchfiles = ">=0.21"         # enables uvicorn --reload
 websockets = ">=12"
 psutil     = ">=5.9"
 
-pytest = ">=8"
+pytest        = ">=8"
+rattler-build = ">=0.35"
 
 # ── Optional Npcap / scapy capture (full L2) ───────────────────────────────
 # Install Npcap first: https://npcap.com
@@ -46,6 +47,9 @@ test = { cmd = "python -m pytest tests/ -v", description = "Run capture parsing 
 mock-device = { cmd = "python tools/udp_device.py", description = "Mock UDP device — add --format nc-frame for decoded packets (--mode feed|chat|sender|receiver|echo)" }
 inject        = { cmd = "python tools/ws_injector.py", description = "WebSocket packet injector → /ws/inject (--mode nc-frame|random|replay  --rate N  --file x.pcap)" }
 inject-faults = { cmd = "python tools/fault_injector.py", description = "Fault injector — sends packets with bad checksums and decoder errors to test issue indicators" }
+
+# Conda package
+build-pkg = { cmd = "rattler-build build --recipe recipe.yaml --output-dir dist/conda", depends-on = ["build-ui"], description = "Build .conda package → dist/conda/" }
 
 # Production: build frontend then serve everything from FastAPI
 serve = { cmd = "python backend/server.py", depends-on = ["build-ui"], description = "Build + serve on :8000" }

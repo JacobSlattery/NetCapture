@@ -13,16 +13,16 @@ Wire layout:
 
 Type tags:
   Unsigned integers
-  0x01  u8      1 byte  unsigned integer                  (0 – 255)
-  0x02  u16     2 bytes big-endian unsigned integer       (0 – 65 535)
-  0x03  u32     4 bytes big-endian unsigned integer       (0 – 4 294 967 295)
-  0x0C  u64     8 bytes big-endian unsigned integer       (0 – 2^64-1)
+  0x01  u8      1 byte  unsigned integer                  (0 - 255)
+  0x02  u16     2 bytes big-endian unsigned integer       (0 - 65 535)
+  0x03  u32     4 bytes big-endian unsigned integer       (0 - 4 294 967 295)
+  0x0C  u64     8 bytes big-endian unsigned integer       (0 - 2^64-1)
 
   Signed integers
-  0x08  i8      1 byte  signed integer                   (-128 – 127)
-  0x09  i16     2 bytes big-endian signed integer        (-32 768 – 32 767)
-  0x0A  i32     4 bytes big-endian signed integer        (-2 147 483 648 – 2 147 483 647)
-  0x0B  i64     8 bytes big-endian signed integer        (-2^63 – 2^63-1)
+  0x08  i8      1 byte  signed integer                   (-128 - 127)
+  0x09  i16     2 bytes big-endian signed integer        (-32 768 - 32 767)
+  0x0A  i32     4 bytes big-endian signed integer        (-2 147 483 648 - 2 147 483 647)
+  0x0B  i64     8 bytes big-endian signed integer        (-2^63 - 2^63-1)
 
   Floating-point
   0x04  f32     4 bytes IEEE 754 big-endian float
@@ -107,7 +107,8 @@ class NcFrameInterpreter:
                 # ── Tag ───────────────────────────────────────────────────────
                 if off >= end:
                     return DecodedFrame(self.name, fields=fields, error="Truncated: expected type tag byte")
-                tag       = payload[off];  off += 1
+                tag       = payload[off]
+                off += 1
                 type_name = _TAG_NAMES.get(tag, f"0x{tag:02x}")
 
                 # ── Value ─────────────────────────────────────────────────────
