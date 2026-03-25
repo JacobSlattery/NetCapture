@@ -3,7 +3,7 @@ name = "netcapture"
 version = "1.0.0"
 description = "Wireshark-like real-time network capture and display tool"
 channels = ["conda-forge"]
-platforms = ["win-64"]
+platforms = ["win-64", "osx-arm64", "linux-64"]
 
 [dependencies]
 python     = ">=3.11,<3.14"
@@ -49,6 +49,7 @@ inject        = { cmd = "python tools/ws_injector.py", description = "WebSocket 
 inject-faults = { cmd = "python tools/fault_injector.py", description = "Fault injector — sends packets with bad checksums and decoder errors to test issue indicators" }
 
 # Conda package
+fix-repodata       = { cmd = "python tools/fix_repodata.py dist/conda", description = "Downgrade repodata.json to v1 for broad compatibility" }
 build-pkg          = { cmd = "rattler-build build --recipe recipe.yaml --output-dir dist/conda",          depends-on = ["build-ui"], description = "Build pure-Python .conda package → dist/conda/" }
 build-pkg-compiled = { cmd = "rattler-build build --recipe recipe-compiled.yaml --variant-config variants.yaml --output-dir dist/conda", depends-on = ["build-ui"], description = "Build Cython-compiled .conda packages (all Python variants) → dist/conda/" }
 

@@ -2,14 +2,14 @@
 # Build:  pixi run build-pkg-compiled   (runs build-ui first, then rattler-build)
 # Output: dist/conda/
 #
-# Implementation modules are compiled to native .pyd extensions.
+# Implementation modules are compiled to native extensions (.pyd on Windows, .so on Linux/macOS).
 # Only public API stubs (__init__.py, __main__.py) ship as readable Python.
 #
 # Trade-offs vs pure-Python build (recipe.yaml):
 #   + Source code is not human-readable
-#   - Locked to a single Python version (cp312) and platform (win-64)
+#   - Locked to a single Python version (cp312) and platform
 #   - Stack traces show compiled function names, not source lines
-#   - Requires MSVC (VS 2022) on the build machine
+#   - Requires a C compiler (MSVC on Windows, clang/gcc on macOS/Linux)
 
 schema_version: 1
 
@@ -31,7 +31,7 @@ build:
 
 requirements:
   build:
-    - vs2022_win-64
+    - ${{ compiler('c') }}
   host:
     - python
     - pip

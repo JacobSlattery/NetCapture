@@ -15,6 +15,7 @@ source:
   path: backend/
 
 build:
+  noarch: python
   script:
     - python -m pip install . --no-deps --no-build-isolation -vv
 
