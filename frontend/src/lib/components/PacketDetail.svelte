@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { createEventDispatcher, onDestroy, onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import { selectedPacket, trackMode, trackFingerprint, trackPrev, isCapturing, connectionStatus, trackLastUpdate, trackStrictness } from '../stores'
   import type { Packet, TrackFingerprint, DecodedValue } from '../types'
   import FieldValue from './FieldValue.svelte'
   import ContextMenu from './ContextMenu.svelte'
 
-  const dispatch = createEventDispatcher<{ watch: { packet: Packet; fieldKey: string } }>()
+  export let onwatch: ((detail: { packet: Packet; fieldKey: string }) => void) | undefined = undefined
 
   // ── Field context menu ────────────────────────────────────────────────────
   type MenuItem = { label: string; sub?: string; action: () => void } | { separator: true }
@@ -36,7 +36,7 @@
     const fullPath = pathPrefix ? `${pathPrefix}.${fieldKey}` : fieldKey
     const strVal = valueToString(fieldValue)
     const items: MenuItem[] = [
-      { label: 'Add to Watchlist', sub: fullPath, action: () => { if (p) dispatch('watch', { packet: p, fieldKey: fullPath }) } },
+      { label: 'Add to Watchlist', sub: fullPath, action: () => { if (p) onwatch?.({ packet: p, fieldKey: fullPath }) } },
     ]
 
     // For objects: add sub-items for each key
@@ -51,7 +51,7 @@
           items.push({
             label: `Watch ${k}`,
             sub: subStr.length > 20 ? subStr.slice(0, 20) + '…' : subStr,
-            action: () => { if (p) dispatch('watch', { packet: p, fieldKey: subPath }) },
+            action: () => { if (p) onwatch?.({ packet: p, fieldKey: subPath }) },
           })
         }
       }
@@ -69,7 +69,7 @@
           items.push({
             label: `Watch [${i}]`,
             sub: subStr.length > 20 ? subStr.slice(0, 20) + '…' : subStr,
-            action: () => { if (p) dispatch('watch', { packet: p, fieldKey: subPath }) },
+            action: () => { if (p) onwatch?.({ packet: p, fieldKey: subPath }) },
           })
         }
       }
@@ -884,7 +884,7 @@
 <svelte:window on:mousemove={dragMove} on:mouseup={dragEnd} />
 
 {#if fieldCtxMenu}
-  <ContextMenu x={fieldCtxMenu.x} y={fieldCtxMenu.y} items={fieldCtxMenu.items} on:close={() => fieldCtxMenu = null} />
+  <ContextMenu x={fieldCtxMenu.x} y={fieldCtxMenu.y} items={fieldCtxMenu.items} onclose={() => fieldCtxMenu = null} />
 {/if}
 
 {#if p}

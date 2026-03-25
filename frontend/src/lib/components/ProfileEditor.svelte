@@ -1,11 +1,14 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte'
   import { interfaces } from '../stores'
   import type { CaptureProfile } from '../types'
 
   export let profiles: CaptureProfile[] = []
+  type ProfileData = Omit<CaptureProfile, 'id' | 'builtin'>
 
-  const dispatch = createEventDispatcher()
+  export let onclose: (() => void) | undefined = undefined
+  export let oncreate: ((data: ProfileData) => void) | undefined = undefined
+  export let onupdate: ((payload: { id: string; data: ProfileData }) => void) | undefined = undefined
+  export let ondelete: ((id: string) => void) | undefined = undefined
 
   // ── Form state ─────────────────────────────────────────────────────────────
   let editingId: string | null = null
@@ -36,15 +39,15 @@
   function save(): void {
     if (!form.name.trim()) return
     if (editingId !== null) {
-      dispatch('update', { id: editingId, data: { ...form } })
+      onupdate?.({ id: editingId, data: { ...form } })
     } else {
-      dispatch('create', { ...form })
+      oncreate?.({ ...form })
     }
     cancelEdit()
   }
 
   function remove(id: string): void {
-    dispatch('delete', id)
+    ondelete?.(id)
     if (editingId === id) cancelEdit()
   }
 
@@ -72,7 +75,7 @@
           Built-in profiles are read-only. User-created profiles persist across sessions.
         </div>
       </div>
-      <button on:click={() => dispatch('close')} aria-label="Close"
+      <button on:click={() => onclose?.()} aria-label="Close"
         class="text-(--nc-fg-4) hover:text-(--nc-fg) transition-colors p-1">
         <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
           <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"/>

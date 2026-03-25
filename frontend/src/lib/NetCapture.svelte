@@ -233,9 +233,9 @@
   data-theme={theme || undefined}
 >
   <Toolbar
-    on:start={() => startCapture($selectedInterface, $activeProfile?.filter ?? $captureFilter, $bpfFilter)}
-    on:stop={stopCapture}
-    on:clear={clearCapture}
+    onstart={() => startCapture($selectedInterface, $activeProfile?.filter ?? $captureFilter, $bpfFilter)}
+    onstop={stopCapture}
+    onclear={clearCapture}
   />
   <StatsBar />
 
@@ -256,7 +256,7 @@
     <!-- Left: packet table + detail (takes remaining space) -->
     <div class="flex flex-col flex-1 min-w-0 min-h-0">
       <PacketTable />
-      <PacketDetail on:watch={(e) => openWatchEditor(e.detail.packet, e.detail.fieldKey)} />
+      <PacketDetail onwatch={({ packet, fieldKey }) => openWatchEditor(packet, fieldKey)} />
     </div>
 
     <!-- Right: watchlist panel with drag handle -->
@@ -267,14 +267,14 @@
         <div class="w-1 bg-(--nc-border) hover:bg-blue-500/30 transition-colors"></div>
       </div>
       <div class="shrink-0 h-full overflow-hidden" style="width:{watchlistWidth}px">
-        <Watchlist on:add={() => openWatchEditor()} on:edit={(e) => openWatchEditor(null, null, e.detail)} />
+        <Watchlist onadd={() => openWatchEditor()} onedit={(entry) => openWatchEditor(null, null, entry)} />
       </div>
     {/if}
   </div>
 </div>
 
 {#if $followStreamPacket}
-  <FollowStream anchor={$followStreamPacket} on:close={() => followStreamPacket.set(null)} />
+  <FollowStream anchor={$followStreamPacket} onclose={() => followStreamPacket.set(null)} />
 {/if}
 
 {#if showWatchEditor}
@@ -282,9 +282,8 @@
     editEntry={watchEditorEntry}
     prefillFromPacket={watchEditorPrefillPkt}
     prefillFieldKey={watchEditorPrefillKey}
-    on:close={closeWatchEditor}
-    on:save={(e) => {
-      const entry = e.detail
+    onclose={closeWatchEditor}
+    onsave={(entry) => {
       watchEntries.update(list => {
         const idx = list.findIndex(x => x.id === entry.id)
         if (idx >= 0) { list[idx] = entry; return [...list] }

@@ -317,7 +317,7 @@
 </script>
 
 {#if ctxMenu}
-  <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} on:close={() => ctxMenu = null} />
+  <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onclose={() => ctxMenu = null} />
 {/if}
 
 <div class="flex flex-col flex-1 min-h-0 font-mono text-xs">

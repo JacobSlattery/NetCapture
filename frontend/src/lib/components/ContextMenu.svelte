@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher, onMount } from 'svelte'
+  import { onMount } from 'svelte'
 
   export let x = 0
   export let y = 0
@@ -7,12 +7,11 @@
     | { label: string; sub?: string; action: () => void }
     | { separator: true }
   > = []
-
-  const dispatch = createEventDispatcher()
+  export let onclose: (() => void) | undefined = undefined
 
   let menuEl: HTMLDivElement
 
-  function close() { dispatch('close') }
+  function close() { onclose?.() }
 
   // Clamp position to viewport so the menu never overflows
   function clampedStyle(x: number, y: number): string {

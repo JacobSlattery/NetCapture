@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher, tick } from 'svelte'
+  import { tick } from 'svelte'
   import {
     isCapturing, connectionStatus, selectedInterface,
     interfaces, captureFilter, captureMode, profiles, activeProfile, packets,
@@ -17,7 +17,9 @@
   import PresetEditor from './PresetEditor.svelte'
   import ProfileEditor from './ProfileEditor.svelte'
 
-  const dispatch = createEventDispatcher()
+  export let onstart: (() => void) | undefined = undefined
+  export let onstop: (() => void) | undefined = undefined
+  export let onclear: (() => void) | undefined = undefined
 
   // ── Modal / panel state ────────────────────────────────────────────────────
   let showSettings      = false
@@ -249,19 +251,18 @@
 
   // ── Profile CRUD handlers ──────────────────────────────────────────────────
 
-  async function handleProfileCreate(e: CustomEvent): Promise<void> {
-    await createProfile(e.detail)
+  async function handleProfileCreate(data: Omit<CaptureProfile, 'id' | 'builtin'>): Promise<void> {
+    await createProfile(data)
   }
 
-  async function handleProfileUpdate(e: CustomEvent): Promise<void> {
-    const { id, data } = e.detail as { id: string; data: typeof e.detail.data }
+  async function handleProfileUpdate(payload: { id: string; data: Omit<CaptureProfile, 'id' | 'builtin'> }): Promise<void> {
+    const { id, data } = payload
     const updated = await updateProfile(id, data)
     // Keep activeProfile in sync if it was just edited
     if (updated && $activeProfile?.id === id) activeProfile.set({ ...$activeProfile, ...updated })
   }
 
-  async function handleProfileDelete(e: CustomEvent): Promise<void> {
-    const id = e.detail as string
+  async function handleProfileDelete(id: string): Promise<void> {
     await deleteProfile(id)
     if ($activeProfile?.id === id) activeProfile.set(null)
   }
@@ -660,7 +661,7 @@
     {/if}
 
     {#if !$isCapturing}
-      <button on:click={() => dispatch('start')}
+      <button on:click={() => onstart?.()}
         class="flex items-center gap-1.5 bg-green-700 hover:bg-green-600 text-white px-3 py-1 rounded text-xs font-semibold transition-colors">
         <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
           <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/>
@@ -668,7 +669,7 @@
         Start
       </button>
     {:else}
-      <button on:click={() => dispatch('stop')}
+      <button on:click={() => onstop?.()}
         class="flex items-center gap-1.5 bg-red-700 hover:bg-red-600 text-white px-3 py-1 rounded text-xs font-semibold transition-colors">
         <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
           <path fill-rule="evenodd" d="M2 10a8 8 0 1116 0 8 8 0 01-16 0zm5-2.25A.75.75 0 017.75 7h4.5a.75.75 0 01.75.75v4.5a.75.75 0 01-.75.75h-4.5a.75.75 0 01-.75-.75v-4.5z" clip-rule="evenodd"/>
@@ -677,7 +678,7 @@
       </button>
     {/if}
 
-    <button on:click={() => { bpfFilter.set(''); dispatch('clear') }} disabled={$isCapturing}
+    <button on:click={() => { bpfFilter.set(''); onclear?.() }} disabled={$isCapturing}
       class="flex items-center gap-1.5 bg-(--nc-surface-2) hover:bg-(--nc-border) text-(--nc-fg-1)
              px-3 py-1 rounded text-xs border border-(--nc-border) transition-colors disabled:opacity-40">
       <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
@@ -1105,7 +1106,7 @@
 {#if showAddressBook}
   <AddressBookEditor
     prefill={addressPrefill}
-    on:close={() => { showAddressBook = false; addressPrefill = '' }}
+    onclose={() => { showAddressBook = false; addressPrefill = '' }}
   />
 {/if}
 
@@ -1113,18 +1114,18 @@
   <PresetEditor
     userPresets={userPresets}
     defaultPresets={BUILTIN_PRESETS}
-    on:save={(e) => { saveUserPresets(e.detail); showPresetEditor = false }}
-    on:close={() => showPresetEditor = false}
+    onsave={(presets) => { saveUserPresets(presets); showPresetEditor = false }}
+    onclose={() => showPresetEditor = false}
   />
 {/if}
 
 {#if showProfileEditor}
   <ProfileEditor
     profiles={$profiles}
-    on:create={handleProfileCreate}
-    on:update={handleProfileUpdate}
-    on:delete={handleProfileDelete}
-    on:close={() => showProfileEditor = false}
+    oncreate={handleProfileCreate}
+    onupdate={handleProfileUpdate}
+    ondelete={handleProfileDelete}
+    onclose={() => showProfileEditor = false}
   />
 {/if}
 

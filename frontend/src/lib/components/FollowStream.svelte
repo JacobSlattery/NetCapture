@@ -1,11 +1,9 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte'
   import { packets } from '../stores'
   import type { Packet } from '../types'
 
   export let anchor: Packet
-
-  const dispatch = createEventDispatcher()
+  export let onclose: (() => void) | undefined = undefined
 
   type DisplayMode = 'ascii' | 'hex'
   let mode: DisplayMode = 'ascii'
@@ -107,7 +105,7 @@
             Hex dump
           </button>
         </div>
-        <button on:click={() => dispatch('close')}
+        <button on:click={() => onclose?.()}
           aria-label="Close"
           class="text-(--nc-fg-4) hover:text-(--nc-fg) transition-colors p-1">
           <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
@@ -147,7 +145,7 @@
         <span class="inline-block w-2 h-2 rounded-sm bg-rose-500 mr-1"></span>
         {anchor.dst_ip}{anchor.dst_port != null ? `:${anchor.dst_port}` : ''} (responder)
       </span>
-      <button on:click={() => dispatch('close')}
+      <button on:click={() => onclose?.()}
         class="px-3 py-1 rounded border border-(--nc-border) text-(--nc-fg-2) hover:bg-(--nc-surface-2) transition-colors">
         Close
       </button>

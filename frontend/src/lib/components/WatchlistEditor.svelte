@@ -1,12 +1,11 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte'
   import type { Packet, WatchEntry, WatchMatcher } from '../types'
 
   export let editEntry: WatchEntry | null = null
   export let prefillFromPacket: Packet | null = null
   export let prefillFieldKey: string | null = null
-
-  const dispatch = createEventDispatcher()
+  export let onclose: (() => void) | undefined = undefined
+  export let onsave: ((entry: WatchEntry) => void) | undefined = undefined
 
   // ── Form state ────────────────────────────────────────────────────────────
   let label     = editEntry?.label     ?? prefillFieldKey ?? ''
@@ -48,11 +47,11 @@
       group:     group.trim() || undefined,
     }
 
-    dispatch('save', entry)
+    onsave?.(entry)
   }
 
   function cancel() {
-    dispatch('close')
+    onclose?.()
   }
 
   function handleKey(e: KeyboardEvent) {

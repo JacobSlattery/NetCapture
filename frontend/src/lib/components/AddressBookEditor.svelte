@@ -1,13 +1,12 @@
 <script lang="ts">
-  import { createEventDispatcher, tick } from 'svelte'
+  import { tick } from 'svelte'
   import { addressBook } from '../stores'
   import { saveAddressBook } from '../captureService'
   import type { AddressBookEntry } from '../types'
 
   /** When set, pre-fills the new-entry row with this address so the user just types a name. */
   export let prefill: string = ''
-
-  const dispatch = createEventDispatcher()
+  export let onclose: (() => void) | undefined = undefined
 
   // Work on a local copy so Cancel reverts all changes
   let entries: AddressBookEntry[] = $addressBook.map(e => ({ ...e }))
@@ -57,11 +56,11 @@
     addressBook.set(entries)
     saving = false
     dirty  = false
-    dispatch('close')
+    onclose?.()
   }
 
   function cancel() {
-    dispatch('close')
+    onclose?.()
   }
 
   // ── Column resize ──────────────────────────────────────────────────────────

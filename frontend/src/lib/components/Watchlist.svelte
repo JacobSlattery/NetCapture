@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { onDestroy, createEventDispatcher } from 'svelte'
+  import { onDestroy } from 'svelte'
   import { watchEntries, watchValues, watchlistOpen, selectedPacket, scrollToSelectedTick, packets, trackMode, trackFingerprint, trackPrev } from '../stores'
   import { get } from 'svelte/store'
   import type { WatchEntry, WatchValue } from '../types'
 
-  const dispatch = createEventDispatcher()
+  export let onadd: (() => void) | undefined = undefined
+  export let onedit: ((entry: WatchEntry) => void) | undefined = undefined
 
   // 1 Hz tick for change-indicator fade (3 s window)
   const CHANGE_FLASH_MS = 3_000
@@ -119,7 +120,7 @@
     {/if}
 
     <button
-      on:click={() => dispatch('add')}
+      on:click={() => onadd?.()}
       class="text-[10px] px-1.5 py-0.5 rounded border border-(--nc-border)
              text-(--nc-fg-4) hover:text-(--nc-fg-2) hover:bg-(--nc-surface-2) transition-colors ml-1"
       title="Add watch entry"
@@ -253,7 +254,7 @@
     style="left:{ctxX}px;top:{ctxY}px"
     on:click|stopPropagation
     on:contextmenu|preventDefault|stopPropagation>
-    <button on:click={() => { dispatch('edit', ctxEntry); closeCtx() }}
+    <button on:click={() => { if (ctxEntry) onedit?.(ctxEntry); closeCtx() }}
       class="w-full text-left flex items-center gap-2 px-3 py-1.5
              text-(--nc-fg-2) hover:bg-(--nc-surface-2) hover:text-(--nc-fg) transition-colors">
       <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 16 16" fill="currentColor">

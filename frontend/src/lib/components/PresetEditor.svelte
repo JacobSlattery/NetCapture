@@ -1,13 +1,12 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte'
   import { parseFilter } from '../filter'
 
   type Preset = { title: string; filter: string }
 
   export let userPresets:    Preset[] = []
   export let defaultPresets: Preset[] = []
-
-  const dispatch = createEventDispatcher()
+  export let onclose: (() => void) | undefined = undefined
+  export let onsave: ((presets: Preset[]) => void) | undefined = undefined
 
   let local     = userPresets.map(p => ({ ...p }))
   let newTitle  = ''
@@ -47,11 +46,11 @@
   }
 
   function save() {
-    dispatch('save', local)
+    onsave?.(local)
   }
 
   function cancel() {
-    dispatch('close')
+    onclose?.()
   }
 
   // ── Column resize ──────────────────────────────────────────────────────────
